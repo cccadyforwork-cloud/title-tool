@@ -23,7 +23,7 @@ python3 server.py
 | 配置项 | 当前默认值 / 用途 |
 | --- | --- |
 | 方舟接口 | `https://ark.cn-beijing.volces.com/api/coding/v3/responses` |
-| `ARK_MODEL` | `doubao-seed-2.0-lite`，识图、资料整理和选词 |
+| `ARK_MODEL` | `doubao-seed-2.1-lite`，识图、资料整理和选词 |
 | `ARK_GENERATION_MODEL` | `doubao-seed-2.1-pro`，生成文案并在同次响应中自检 |
 | `ARK_REVIEW_MODEL` | 兼容旧配置，作为未设置生成模型时的默认来源；当前没有独立复核调用 |
 | `ARK_API_KEY` | 由本机服务读取，不发送到前端 |
@@ -32,6 +32,8 @@ python3 server.py
 
 1. 当前进程的 `ARK_API_KEY` 环境变量。
 2. macOS 钥匙串：服务名 `prompt-tool.api-keys`、账户名 `ARK_API_KEY`，可复用本机 prompt-tool 已保存的密钥。
+
+识图、选词和生成调用均显式关闭深度思考。更新模型配置后须重启已运行的本机服务；工作台内置版使用服务器统一管理的方舟密钥和 `ARK_MODEL`。
 
 其他系统或没有钥匙串记录的设备，需要先设置环境变量。项目不会自动加载 `.env` 文件。
 

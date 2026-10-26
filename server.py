@@ -16,7 +16,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 ARK_URL = "https://ark.cn-beijing.volces.com/api/coding/v3/responses"
-MODEL = os.environ.get("ARK_MODEL", "doubao-seed-2.0-lite")
+MODEL = os.environ.get("ARK_MODEL", "doubao-seed-2.1-lite")
 REVIEW_MODEL = os.environ.get("ARK_REVIEW_MODEL", "doubao-seed-2.1-pro")
 GENERATION_MODEL = os.environ.get("ARK_GENERATION_MODEL", REVIEW_MODEL)
 MAX_REQUEST = 24 * 1024 * 1024

@@ -15,6 +15,9 @@ const REVIEW_LABELS = {
   allocation_ok: '标题与亮点分工合理', priority_ok: '相关高流量词优先安排', no_redundancy: '无不必要的同义词堆砌'
 };
 const charLength = (text) => Array.from(text || '').length;
+const NAME_MIN = 68;
+const NAME_LIMIT = 75;
+const RULES_VERSION = '20261027-1';
 let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;
@@ -51,6 +54,12 @@ async function generateWithArk(file, searchFile, original, reference) {
     try { data = await response.json(); }
     catch { throw new Error('本机模型服务未启动，请运行 python3 server.py'); }
     if (!response.ok) throw new Error(data.error || '生成失败');
+    if (typeof data.item_name === 'string') {
+      const length = charLength(data.item_name);
+      if (length < NAME_MIN || length > NAME_LIMIT) {
+        throw new Error(`生成结果未保存：Item Name 为 ${length} 个字符，要求 ${NAME_MIN}–${NAME_LIMIT} 个字符（含空格和标点）`);
+      }
+    }
     const valid = typeof data.item_name === 'string' && data.item_name.trim()
       && typeof data.item_highlights === 'string' && data.item_highlights.trim()
       && Array.isArray(data.name_independent_keywords) && data.name_independent_keywords.length >= 3
@@ -125,7 +134,8 @@ function renderResult(result) {
   el.checkList.replaceChildren(
     textNode('p', `✓ 双截图：流量表“${result.traffic_header}”与类目表“${result.search_header}”；不同指标分别排序`),
     textNode('p', `✓ 本地：标题 ${independent.size} 个独立完整词组；重要变体在标题中`),
-    textNode('p', '长度规则由豆包在生成时执行，本地仅显示字符数，不按长度拦截或重生成'),
+    textNode('p', `✓ 标题长度：${charLength(result.item_name)} 个字符，已通过前后端 68–75 字符校验（含空格和标点）；不自动截断或重生成`),
+    textNode('p', '亮点 100–125 字符仍由豆包在生成时控制，本地展示实际字符数'),
     textNode('p', `✓ 亮点：${result.highlights_independent_keywords.length} 个独立类目搜索词组，至少 3 个，优先月搜索量并尽量多覆盖`),
     textNode('p', '✓ 计数：不跨字段拼词，嵌套、单复数和连字符变体不重复计数'),
     ...Object.entries(REVIEW_LABELS).map(([key, label]) => textNode('p', `${result.review[key] ? '✓' : '×'} 豆包生成自检：${label}`)),
@@ -179,7 +189,7 @@ function renderHistory() {
     const content = document.createElement('div'); content.className = 'history-content';
     content.append(textNode('p', `${legacy ? '旧版单标题' : '商品标题'} · ${name}`, 'history-title'));
     if (!legacy) content.append(textNode('p', `商品亮点 · ${item.item_highlights}`, 'history-highlights'));
-    content.append(textNode('div', `${legacy ? `${charLength(name)} 字符 · 旧版规则` : `标题 ${charLength(name)} 字符 · 亮点 ${charLength(item.item_highlights)} 字符 · ${item.name_keyword_count ?? '—'} 个标题独立词组 · ${item.rules_version === '20261026-8' ? `亮点 ${item.highlights_keyword_count ?? '—'} 个独立搜索词组` : '旧规则结果'}`} · ${new Date(item.time).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})}`, 'history-meta'));
+    content.append(textNode('div', `${legacy ? `${charLength(name)} 字符 · 旧版规则` : `标题 ${charLength(name)} 字符 · 亮点 ${charLength(item.item_highlights)} 字符 · ${item.name_keyword_count ?? '—'} 个标题独立词组 · ${item.rules_version === RULES_VERSION ? `亮点 ${item.highlights_keyword_count ?? '—'} 个独立搜索词组` : '旧规则结果'}`} · ${new Date(item.time).toLocaleString('zh-CN', {month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit'})}`, 'history-meta'));
     const actions = document.createElement('div'); actions.className = 'history-actions';
     actions.append(copyAction(legacy ? '复制旧标题' : '复制标题', name, '标题已复制'));
     if (!legacy) actions.append(copyAction('复制亮点', item.item_highlights, '商品亮点已复制'), copyAction('复制全部', pairText(item), '两个字段已复制'));

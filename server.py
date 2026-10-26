@@ -27,7 +27,7 @@ NAME_MIN = 68
 HIGHLIGHTS_MIN = 100
 MIN_NAME_KEYWORDS = 3
 MIN_HIGHLIGHTS_KEYWORDS = 3
-RULES_VERSION = "20261026-8"
+RULES_VERSION = "20261027-1"
 
 
 def read_api_key():
@@ -349,7 +349,7 @@ def plan_product(original, reference, keywords, api_key):
 
 
 def local_checks(name, highlights, variants):
-    """Check structure and variants; length is handled by Doubao during generation."""
+    """Enforce the name range, structure and variants without rewriting output."""
     errors = []
     for label, text in (("Item Name", name), ("Item Highlights", highlights)):
         if not isinstance(text, str) or not text.strip():
@@ -367,6 +367,8 @@ def local_checks(name, highlights, variants):
         if text.count("(") != text.count(")") or text.count("[") != text.count("]"):
             errors.append(f"{label} 括号不完整")
     if isinstance(name, str):
+        if not NAME_MIN <= len(name) <= NAME_LIMIT:
+            errors.append(f"Item Name 为 {len(name)} 个字符，要求 {NAME_MIN}–{NAME_LIMIT} 个字符（含空格和标点）")
         for row in variants:
             if not contains_phrase(name, row["value"]):
                 errors.append(f"Item Name 缺少重要变体：{row['value']}")
@@ -502,6 +504,8 @@ def generate(payload):
         "Return only {\"item_name\":\"...\",\"item_highlights\":\"...\",\"self_check\":{\"natural\":true,\"facts_supported\":true,\"identity_clear\":true,\"variants_preserved\":true,\"allocation_ok\":true,\"priority_ok\":true,\"no_redundancy\":true,\"issues\":[]}}.\n"
         "FIXED HARD RULES:\n"
         "1. Name: 68-75 CHARACTERS, including spaces and punctuation. Aim for 72. "
+        "75 is an ABSOLUTE MAXIMUM for Name: 76 or 83 characters will be rejected, even if all "
+        "seven semantic self-checks pass. A name below 68 characters will also be rejected. "
         "Highlights: 100-125 CHARACTERS. Aim for 116, never aim at either lower bound. "
         "125 is an ABSOLUTE MAXIMUM for Highlights, not a flexible target. Do not output 126 or more. "
         "Before returning the JSON, internally count EVERY character including spaces, punctuation and "
@@ -547,9 +551,13 @@ def generate(payload):
         "supplied, not just one. Their compact wording and an audience group can coexist with three "
         "short product-type phrases. In your same-response self-check verify that each distinctive "
         "feature in highlight_focus actually appears in Highlights with its defining qualifier.\n"
-        "The measured name_budgets below are optional starting skeletons with EXACT local character counts. "
-        "Use their remaining-character budget for short supported modifiers/connections; they are not "
-        "finished titles. Recount the COMPLETE final fields and perform the seven self-checks as part of writing. All three required product-type phrases may appear in both fields; this is not redundancy by itself. "
+        "The measured name_budgets below are starting skeletons with EXACT local character counts. "
+        "When available, select a feasible budget BEFORE writing Name. ALL added letters, spaces, "
+        "punctuation, brand text and connections together must fit maximum_extra_characters. "
+        "If they do not fit, select a shorter eligible phrase combination; do not exceed 75 or drop "
+        "required identity/variants. Skeletons are not finished titles. Recount the COMPLETE final "
+        "Name, not just its keywords, and confirm 68 <= character count <= 75 before returning JSON. "
+        "Perform the seven semantic self-checks as part of writing. All three required product-type phrases may appear in both fields; this is not redundancy by itself. "
         "For allocation_ok and priority_ok, check that compact distinctive reference features and explicit "
         "uses were preserved before optional extra keyword repetition or generic wording. For "
         "facts_supported, check that meaningful qualifiers and audience members were not accidentally "
@@ -599,7 +607,8 @@ def generate(payload):
                                  "name_limit": NAME_LIMIT, "highlights_limit": HIGHLIGHTS_LIMIT,
                                  "name_keyword_count": len(name_groups), "minimum_name_keywords": MIN_NAME_KEYWORDS,
                                  "highlights_keyword_count": len(highlight_groups), "minimum_highlights_keywords": MIN_HIGHLIGHTS_KEYWORDS,
-                                 "length_policy": "model_generation_only"},
+                                 "name_length_passed": True,
+                                 "length_policy": "name_range_enforced_highlights_model_only"},
             "review": review, "model": GENERATION_MODEL, "rules_version": RULES_VERSION, "attempts": 1}
 
 

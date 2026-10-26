@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="根据流量词截图、原标题与竞品参考，生成 Item Name 和 Item Highlights。">
+  <title>商品标题生成工作台</title><link rel="icon" href="data:,"><script>try{document.documentElement.dataset.theme=localStorage.getItem('title-workbench-theme')||'light'}catch{document.documentElement.dataset.theme='light'}</script><link rel="stylesheet" href="./styles.css?v=20261026-5">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="page-head">
+      <div class="page-icon">✦</div>
+      <div><h1>商品标题生成工作台</h1><p>生成目标：标题 68–75 字符 · 亮点 100–125 字符 · 各至少 3 个独立词组</p></div>
+      <div class="head-actions"><a class="ghost-button workflow-link" href="./workflow.html" target="_blank" rel="noopener">规则与链路 ↗</a><span class="status"><i></i> 方舟模型</span><button class="theme-button" id="themeButton" type="button" aria-label="切换深色主题"><span class="sun">☀</span><span class="moon">☾</span></button></div>
+    </header>
+
+    <section class="panel input-panel">
+      <div class="panel-title">
+        <div><h2>输入信息</h2><p>上传两张截图：高占比词优先标题，类目搜索词主要补充亮点；原标题与人工选定参考标题共同提供商品信息</p></div>
+        <button id="clearButton" class="ghost-button" type="button">清空输入</button>
+      </div>
+      <form id="titleForm">
+        <fieldset id="inputFields">
+        <div class="input-grid">
+          <div class="field screenshot-field">
+            <label>① 竞品流量占比截图 <b>*</b></label>
+            <div class="upload-box" id="uploadBox" role="button" tabindex="0" aria-label="点击或拖拽上传关键词信息截图">
+              <input id="imageInput" type="file" accept="image/png,image/jpeg,image/webp" aria-label="上传关键词信息截图">
+              <div class="upload-empty" id="uploadEmpty">
+                <span class="upload-symbol">＋</span><strong>点击或拖拽上传截图</strong><small>JPG / PNG / WebP，最大 8MB</small>
+              </div>
+              <div class="preview" id="preview" hidden>
+                <img id="imagePreview" alt="关键词信息截图预览"><div class="upload-success"><span>✓ 已上传</span><strong id="fileName"></strong></div><button id="removeImage" type="button" aria-label="删除截图">×</button>
+              </div>
+            </div>
+            <div class="field-note">必须包含“流量占比”列，优先用于商品标题；每张最大 8MB</div>
+          </div>
+
+          <div class="field screenshot-field">
+            <label>② 类目搜索量截图 <b>*</b></label>
+            <div class="upload-box" id="searchUploadBox" role="button" tabindex="0" aria-label="点击或拖拽上传类目搜索量截图">
+              <input id="searchImageInput" type="file" accept="image/png,image/jpeg,image/webp" aria-label="上传类目搜索量截图">
+              <div class="upload-empty" id="searchUploadEmpty"><span class="upload-symbol">＋</span><strong>点击或拖拽上传类目截图</strong><small>JPG / PNG / WebP，最大 8MB</small></div>
+              <div class="preview" id="searchPreview" hidden><img id="searchImagePreview" alt="类目搜索量截图预览"><div class="upload-success"><span>✓ 已上传</span><strong id="searchFileName"></strong></div><button id="removeSearchImage" type="button" aria-label="删除类目截图">×</button></div>
+            </div>
+            <div class="field-note">必须包含“月搜索量”列，主要补充亮点；需要时补足标题独立词组</div>
+          </div>
+        </div>
+
+        <div class="input-grid text-input-grid"><div class="field">
+          <label for="originalTitle">原有标题 <b>*</b></label>
+          <textarea id="originalTitle" class="main-input" maxlength="1200" placeholder="粘贴商品现有标题，作为商品事实依据"></textarea>
+          <div class="field-note"><span>当前商品身份与重要变体以原标题为准；参考标题补充属性</span><span id="titleCount">0 个字符</span></div>
+        </div>
+        <div class="field reference-field">
+          <label for="referenceTitles">竞品参考标题（选填）</label>
+          <textarea id="referenceTitles" placeholder="粘贴你确认适用于当前产品的参考标题，功能和属性可直接采用"></textarea>
+          <div class="field-note">选定即视为你已确认适用，不再审核参考属性；当前颜色、数量、尺寸等变体以原标题为准</div>
+        </div>
+        </div>
+        <div class="generate-row">
+          <button class="primary-button" type="submit"><span>生成标题与亮点</span><strong>→</strong></button>
+        </div>
+        </fieldset>
+      </form>
+    </section>
+
+    <section class="panel output-panel">
+      <div class="panel-title output-head">
+        <div><h2>输出结果</h2></div>
+        <span class="result-status" id="resultStatus">等待生成</span>
+      </div>
+      <div class="empty-result" id="emptyResult"><span>✦</span><div><strong>暂未生成</strong><p>填写输入信息，生成两个互补字段</p></div></div>
+      <div class="error-message" id="errorMessage" role="alert" hidden></div>
+      <div class="generated-result" id="generatedResult" hidden>
+        <div class="result-fields">
+          <article class="result-field"><div class="field-output-head"><strong>商品标题 · Item Name</strong><span id="nameCount">要求 68–75 字符</span></div><div class="title-output" id="nameOutput"></div><button class="copy-button" id="copyName" type="button">复制 Item Name</button></article>
+          <article class="result-field"><div class="field-output-head"><strong>商品亮点 · Item Highlights</strong><span id="highlightsCount">要求 100–125 字符</span></div><div class="title-output" id="highlightsOutput"></div><button class="copy-button" id="copyHighlights" type="button">复制 Item Highlights</button></article>
+        </div>
+        <div class="used-keywords" id="usedKeywords"></div>
+        <div class="result-bottom">
+          <div class="result-info"><span id="coverageCount">标题独立词组 0 / 至少 3 个</span><span>嵌套、单复数与连字符变体不重复计数</span></div>
+          <button class="copy-button" id="copyBoth" type="button">复制两个字段</button>
+        </div>
+        <details class="audit-details"><summary>查看各环节自检与选词依据</summary><div id="checkList" class="check-list"></div><div id="factsList" class="facts-list"></div><table class="keyword-table"><thead><tr><th>关键词</th><th>流量占比</th><th>月搜索量</th><th>来源</th><th>原词组匹配</th><th>筛选依据</th></tr></thead><tbody id="keywordRows"></tbody></table></details>
+      </div>
+    </section>
+
+    <section class="panel history-panel">
+      <div class="panel-title history-head">
+        <div><h2>生成记录</h2><p>自动保留最近 10 条，可直接再次复制</p></div>
+        <button id="clearHistory" class="ghost-button" type="button">清空记录</button>
+      </div>
+      <div class="history-empty" id="historyEmpty">暂无生成记录</div>
+      <div class="history-list" id="historyList" hidden></div>
+    </section>
+  </main>
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+  <script src="./app.js?v=20261026-12"></script>
+</body>
+</html>

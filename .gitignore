@@ -1,0 +1,21 @@
+# Local settings and credentials
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Python / OS / editor files
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
+.idea/
+.vscode/
+*.log
+
+# Generated screenshots and distribution archives
+artifacts/
+*.zip
+工作台效果预览.png

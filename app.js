@@ -7,7 +7,8 @@ const el = {
   name: $('#nameOutput'), highlights: $('#highlightsOutput'), nameCount: $('#nameCount'), highlightsCount: $('#highlightsCount'),
   usedKeywords: $('#usedKeywords'), resultStatus: $('#resultStatus'), coverageCount: $('#coverageCount'),
   toast: $('#toast'), generate: $('.primary-button'), historyList: $('#historyList'), historyEmpty: $('#historyEmpty'),
-  themeButton: $('#themeButton'), keywordRows: $('#keywordRows'), checkList: $('#checkList'), factsList: $('#factsList')
+  themeButton: $('#themeButton'), keywordRows: $('#keywordRows'), checkList: $('#checkList'), factsList: $('#factsList'),
+  draftStatus: $('#draftStatus')
 };
 const REVIEW_LABELS = {
   natural: '英文自然、词组关系清楚', facts_supported: '与人工确认资料一致，不改错信息',
@@ -22,6 +23,102 @@ let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;
 let busy = false;
+const draftParams = new URLSearchParams(location.search);
+const draftCase = draftParams.get('store_case_id');
+const draftSku = draftParams.get('store_sku');
+const draftScope = draftCase && draftSku ? JSON.stringify([draftCase, draftSku]) : 'standalone';
+const draftTextKey = `title-workbench-draft-text:${draftScope}`;
+const draftImageKey = kind => `${draftScope}:${kind}`;
+const imageTouched = {traffic: false, search: false};
+let draftDbPromise;
+let draftImageRestore;
+let draftImageWrites = Promise.resolve();
+let draftImagePending = 0;
+let draftImageRestoring = true;
+let draftTextError = false;
+let draftImageReadError = false;
+const draftImageWriteErrors = {traffic: false, search: false};
+
+function updateDraftStatus() {
+  const imageError = draftImageReadError || draftImageWriteErrors.traffic || draftImageWriteErrors.search;
+  if (draftTextError || imageError) {
+    el.draftStatus.textContent = draftTextError && imageError ? '浏览器未能保存草稿；刷新前请保留原资料'
+      : imageError ? '截图缓存不可用，刷新后需重新上传' : '文字缓存不可用，刷新后需重新填写';
+  } else if (draftImagePending) el.draftStatus.textContent = '正在保存截图，请稍候刷新…';
+  else if (draftImageRestoring) el.draftStatus.textContent = '正在恢复本浏览器的截图草稿…';
+  else if (el.original.value || el.reference.value || screenshotFile || searchScreenshotFile) el.draftStatus.textContent = '草稿已保存在此浏览器；清空输入可删除当前草稿';
+  else el.draftStatus.textContent = '填写和上传后自动保存在此浏览器';
+}
+function saveDraftText() {
+  try {
+    localStorage.setItem(draftTextKey, JSON.stringify({original: el.original.value, reference: el.reference.value}));
+    draftTextError = false;
+  } catch { draftTextError = true; }
+  updateDraftStatus();
+}
+function restoreDraftText() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(draftTextKey) || 'null');
+    if (saved && typeof saved === 'object') {
+      if (typeof saved.original === 'string') el.original.value = saved.original.slice(0, 1200);
+      if (typeof saved.reference === 'string') el.reference.value = saved.reference;
+    }
+  } catch { draftTextError = true; }
+  el.titleCount.textContent = `${charLength(el.original.value)} 个字符`;
+  updateDraftStatus();
+}
+function draftDb() {
+  if (!draftDbPromise) draftDbPromise = new Promise((resolve, reject) => {
+    if (!('indexedDB' in window)) return reject(new Error('浏览器未提供截图缓存'));
+    const request = indexedDB.open('title-workbench-drafts', 1);
+    request.onupgradeneeded = () => request.result.createObjectStore('images', {keyPath: 'id'});
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error || new Error('无法打开截图缓存'));
+  });
+  return draftDbPromise;
+}
+async function imageTransaction(mode, operation) {
+  const db = await draftDb();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('images', mode);
+    let result;
+    tx.oncomplete = () => resolve(result);
+    tx.onerror = () => reject(tx.error || new Error('截图缓存失败'));
+    tx.onabort = () => reject(tx.error || new Error('截图缓存已取消'));
+    try { operation(tx.objectStore('images'), value => { result = value; }); }
+    catch (error) { tx.abort(); reject(error); }
+  });
+}
+function saveDraftImage(kind, file) {
+  draftImagePending++;
+  updateDraftStatus();
+  draftImageWrites = draftImageWrites.catch(() => {}).then(() => draftImageRestore.catch(() => {}))
+    .then(() => imageTransaction('readwrite', store => {
+      if (file) store.put({id: draftImageKey(kind), blob: file, name: file.name, type: file.type, lastModified: file.lastModified});
+      else store.delete(draftImageKey(kind));
+    }))
+    .then(() => { draftImageWriteErrors[kind] = false; draftImageReadError = false; }, () => { draftImageWriteErrors[kind] = true; })
+    .finally(() => { draftImagePending--; updateDraftStatus(); });
+}
+async function restoreDraftImages() {
+  try {
+    const rows = await imageTransaction('readonly', (store, done) => {
+      const values = {};
+      for (const kind of ['traffic', 'search']) {
+        const request = store.get(draftImageKey(kind));
+        request.onsuccess = () => { values[kind] = request.result; };
+      }
+      // The transaction completes after both reads; the object is filled by then.
+      done(values);
+    });
+    for (const kind of ['traffic', 'search']) {
+      const row = rows[kind];
+      if (imageTouched[kind] || !row || !(row.blob instanceof Blob) || !['image/png', 'image/jpeg', 'image/webp'].includes(row.type) || row.blob.size > 8 * 1024 * 1024) continue;
+      renderImage(new File([row.blob], row.name || `${kind}.png`, {type: row.type, lastModified: row.lastModified}), kind, false);
+    }
+  } catch { draftImageReadError = true; }
+  finally { draftImageRestoring = false; updateDraftStatus(); }
+}
 
 function textNode(tag, text, className = '') {
   const node = document.createElement(tag); node.textContent = text; if (className) node.className = className; return node;
@@ -95,10 +192,11 @@ function uploadNodes(kind) {
   return kind === 'search' ? {input: $('#searchImageInput'), box: $('#searchUploadBox'), empty: $('#searchUploadEmpty'), preview: $('#searchPreview'), image: $('#searchImagePreview'), filename: $('#searchFileName'), remove: $('#removeSearchImage')}
     : {input: el.imageInput, box: el.uploadBox, empty: el.uploadEmpty, preview: el.preview, image: el.imagePreview, filename: $('#fileName'), remove: $('#removeImage')};
 }
-function renderImage(file, kind = 'traffic') {
+function renderImage(file, kind = 'traffic', persist = true) {
   if (busy || !file) return;
   if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) return showToast('请选择 JPG、PNG 或 WebP 图片');
   if (file.size > 8 * 1024 * 1024) return showToast('截图不能超过 8MB');
+  if (persist) imageTouched[kind] = true;
   if (kind === 'search') searchScreenshotFile = file; else screenshotFile = file;
   const nodes = uploadNodes(kind); clearResult(); const reader = new FileReader();
   reader.onload = () => {
@@ -107,12 +205,17 @@ function renderImage(file, kind = 'traffic') {
     nodes.empty.hidden = true; nodes.preview.hidden = false; nodes.box.classList.add('has-file');
   };
   reader.readAsDataURL(file);
+  if (persist) saveDraftImage(kind, file);
+  updateDraftStatus();
 }
-function removeImage(kind = 'traffic') {
+function removeImage(kind = 'traffic', persist = true) {
+  if (persist) imageTouched[kind] = true;
   const nodes = uploadNodes(kind);
   nodes.input.value = ''; nodes.image.removeAttribute('src'); nodes.filename.textContent = '';
   nodes.preview.hidden = true; nodes.empty.hidden = false; nodes.box.classList.remove('has-file');
   if (kind === 'search') searchScreenshotFile = null; else screenshotFile = null;
+  if (persist) saveDraftImage(kind, null);
+  updateDraftStatus();
 }
 function fieldLabel(locations) { return (locations || []).map(value => value === 'item_name' ? '标题' : '亮点').join('、') || '未匹配'; }
 function sourceLabel(row) { return (row.sources || []).map(source => source === 'traffic_share' ? '流量表' : '类目表').join('＋'); }
@@ -214,8 +317,8 @@ function setTheme(theme) {
   try { localStorage.setItem('title-workbench-theme', theme); } catch { /* The form remains usable when storage is blocked. */ }
   el.themeButton.setAttribute('aria-label', theme === 'dark' ? '切换浅色主题' : '切换深色主题');
 }
-el.original.addEventListener('input', () => { el.titleCount.textContent = `${charLength(el.original.value)} 个字符`; clearResult(); });
-el.reference.addEventListener('input', clearResult);
+el.original.addEventListener('input', () => { el.titleCount.textContent = `${charLength(el.original.value)} 个字符`; clearResult(); saveDraftText(); });
+el.reference.addEventListener('input', () => { clearResult(); saveDraftText(); });
 ['traffic', 'search'].forEach(kind => {
   const nodes = uploadNodes(kind);
   nodes.input.addEventListener('change', event => renderImage(event.target.files[0], kind));
@@ -247,7 +350,14 @@ el.form.addEventListener('submit', async event => {
 [['copyName', 'item_name', '商品标题已复制'], ['copyHighlights', 'item_highlights', '商品亮点已复制'], ['copyBoth', null, '两个字段已复制']].forEach(([id, key, message]) => {
   $('#' + id).addEventListener('click', async () => { if (!currentResult) return; try { await copyText(key ? currentResult[key] : pairText(currentResult)); showToast(message); } catch (error) { showToast(error.message); } });
 });
-$('#clearButton').addEventListener('click', () => { if (busy) return; el.original.value = ''; el.reference.value = ''; el.titleCount.textContent = '0 个字符'; removeImage(); removeImage('search'); clearResult(); });
+$('#clearButton').addEventListener('click', () => {
+  if (busy) return;
+  el.original.value = ''; el.reference.value = ''; el.titleCount.textContent = '0 个字符';
+  try { localStorage.removeItem(draftTextKey); draftTextError = false; } catch { draftTextError = true; }
+  removeImage(); removeImage('search'); clearResult(); updateDraftStatus();
+});
 $('#clearHistory').addEventListener('click', () => { try { localStorage.removeItem('title-workbench-history'); renderHistory(); showToast('生成记录已清空'); } catch { showToast('浏览器存储不可用，未能清空记录'); } });
 el.themeButton.addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
+restoreDraftText();
+draftImageRestore = restoreDraftImages();
 setTheme(document.documentElement.dataset.theme || 'light'); renderHistory(); setBusy(false);

@@ -43,6 +43,7 @@ async function submitWithName(name, options = {}) {
   };
   const context = vm.createContext({
     document: {querySelector: query, createElement: node, addEventListener() {}, documentElement: node()},
+    window: {}, location: {search: ''}, URLSearchParams,
     localStorage: {getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value)},
     FileReader: class { readAsDataURL() { this.result = 'data:image/png;base64,Zml4dHVyZQ=='; this.onload(); } },
     AbortController, setTimeout: () => 1, clearTimeout() {},

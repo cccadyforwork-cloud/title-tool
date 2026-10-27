@@ -29,4 +29,6 @@ fieldset{min-width:0;margin:0;padding:0;border:0}fieldset:disabled{opacity:.75}b
 
 .input-grid{grid-template-columns:1fr 1fr}.text-input-grid{margin-top:18px}.text-input-grid .reference-field{margin-top:0}.text-input-grid textarea{height:150px}.keyword-table th:nth-child(1){width:21%}.keyword-table th:nth-child(2){width:9%}.keyword-table th:nth-child(3){width:10%}.keyword-table th:nth-child(4){width:12%}.keyword-table th:nth-child(5){width:17%}.keyword-table th:nth-child(6){width:31%}
 
+.panel-title .draft-status{margin-top:5px;color:var(--success);font-weight:600}
+
 .generate-row{display:flex;justify-content:flex-end;margin-top:18px}.used-keywords{display:grid;gap:10px}.keyword-line{display:flex;align-items:flex-start;gap:12px}.keyword-line-label{flex:0 0 72px;padding-top:4px;color:var(--muted);font-size:12px}.keyword-line-terms{display:flex;flex-wrap:wrap;gap:6px;min-width:0}.keyword-chip{display:inline-flex;align-items:center;flex-wrap:wrap;gap:4px}.keyword-chip b{margin-left:0}

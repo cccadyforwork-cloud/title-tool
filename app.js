@@ -17,7 +17,7 @@ const REVIEW_LABELS = {
 const charLength = (text) => Array.from(text || '').length;
 const NAME_MIN = 68;
 const NAME_LIMIT = 75;
-const RULES_VERSION = '20261027-1';
+const RULES_VERSION = '20261027-2';
 let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;
@@ -42,6 +42,21 @@ function setBusy(value) {
   el.uploadBox.setAttribute('aria-disabled', String(value));
   $('#searchUploadBox').setAttribute('aria-disabled', String(value));
 }
+function keywordQuotaValid(data, field) {
+  const checks = data.local_validation;
+  const available = checks?.[`available_${field}_keywords`];
+  const minimum = checks?.[`minimum_${field}_keywords`];
+  const count = checks?.[`${field}_keyword_count`];
+  const rows = data[`${field}_independent_keywords`];
+  return Number.isInteger(available) && available >= 0 && available <= data.keywords.length
+    && minimum === Math.min(3, available) && Number.isInteger(count)
+    && Array.isArray(rows) && rows.length === count && count >= minimum && count <= available;
+}
+function keywordQuotaText(result, field) {
+  const checks = result.local_validation;
+  const available = checks[`available_${field}_keywords`], minimum = checks[`minimum_${field}_keywords`];
+  return `已覆盖 ${checks[`${field}_keyword_count`]} 个 · 可用 ${available} 个 · 本次至少 ${minimum} 个${available < 3 ? '（可用不足 3 个，按实有数量执行）' : '，按原排序尽量多覆盖'}`;
+}
 async function generateWithArk(file, searchFile, original, reference) {
   const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 720000);
   try {
@@ -62,11 +77,8 @@ async function generateWithArk(file, searchFile, original, reference) {
     }
     const valid = typeof data.item_name === 'string' && data.item_name.trim()
       && typeof data.item_highlights === 'string' && data.item_highlights.trim()
-      && Array.isArray(data.name_independent_keywords) && data.name_independent_keywords.length >= 3
-      && data.local_validation?.name_keyword_count >= 3
-      && Array.isArray(data.highlights_independent_keywords) && data.highlights_independent_keywords.length >= 3
-      && data.local_validation?.highlights_keyword_count >= 3
       && Array.isArray(data.keywords) && Array.isArray(data.used) && data.local_validation?.passed === true
+      && keywordQuotaValid(data, 'name') && keywordQuotaValid(data, 'highlights')
       && data.review?.approved === true && Object.keys(REVIEW_LABELS).every(key => data.review[key] === true);
     if (!valid) throw new Error('生成结果未通过完整自检，未保存，请重试');
     return data;
@@ -109,7 +121,6 @@ function renderResult(result) {
   el.nameCount.textContent = `${charLength(result.item_name)} 字符（68–75）`;
   el.highlightsCount.textContent = `${charLength(result.item_highlights)} 字符（100–125）`;
   const independent = new Set(result.name_independent_keywords.map(row => row.term.toLowerCase()));
-  el.coverageCount.textContent = `标题独立词组 ${independent.size} / 至少 3 个 · 两字段共匹配 ${result.used.length} 个原词组`;
   el.usedKeywords.replaceChildren();
   const keywordFields = [
     {key: 'item_name', label: '标题：', metric: 'traffic'},
@@ -130,13 +141,13 @@ function renderResult(result) {
     });
     line.append(terms); el.usedKeywords.append(line);
   });
-  el.coverageCount.textContent = `标题 ${independent.size} 个独立词组 · 亮点 ${result.highlights_independent_keywords.length} 个独立搜索词组`;
+  el.coverageCount.textContent = `标题：${keywordQuotaText(result, 'name')}；亮点：${keywordQuotaText(result, 'highlights')}`;
   el.checkList.replaceChildren(
     textNode('p', `✓ 双截图：流量表“${result.traffic_header}”与类目表“${result.search_header}”；不同指标分别排序`),
-    textNode('p', `✓ 本地：标题 ${independent.size} 个独立完整词组；重要变体在标题中`),
+    textNode('p', `✓ 标题：${keywordQuotaText(result, 'name')}；重要变体在标题中`),
     textNode('p', `✓ 标题长度：${charLength(result.item_name)} 个字符，已通过前后端 68–75 字符校验（含空格和标点）；不自动截断或重生成`),
     textNode('p', '亮点 100–125 字符仍由豆包在生成时控制，本地展示实际字符数'),
-    textNode('p', `✓ 亮点：${result.highlights_independent_keywords.length} 个独立类目搜索词组，至少 3 个，优先月搜索量并尽量多覆盖`),
+    textNode('p', `✓ 亮点类目搜索词：${keywordQuotaText(result, 'highlights')}；优先月搜索量`),
     textNode('p', '✓ 计数：不跨字段拼词，嵌套、单复数和连字符变体不重复计数'),
     ...Object.entries(REVIEW_LABELS).map(([key, label]) => textNode('p', `${result.review[key] ? '✓' : '×'} 豆包生成自检：${label}`)),
     textNode('p', `规则 ${result.rules_version} · 生成 ${result.model} · 生成时自检 · 本次尝试 ${result.attempts} 次`, 'audit-meta')

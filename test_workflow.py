@@ -154,15 +154,81 @@ class WorkflowTests(unittest.TestCase):
                 server.generate({"image": IMAGE, "original": ORIGINAL})
             ask.assert_not_called()
 
-    @patch.object(server, "read_api_key", return_value="fake-key")
-    @patch.object(server, "plan_product")
-    @patch.object(server, "extract_search_keywords", return_value=(SEARCH, "月搜索量"))
-    @patch.object(server, "extract_keywords", return_value=(KEYWORDS, "流量占比"))
-    def test_fewer_than_three_candidates_is_not_silently_accepted(self, traffic, search, plan, key):
-        plan.return_value = {"keywords": [{"term": "pill cutter", "traffic": 80, "eligible": True},
-                                          {"term": "small pill cutter", "traffic": 5, "eligible": True}]}
-        with self.assertRaisesRegex(ValueError, "少于标题要求的 3 个"):
-            server.generate({"image": IMAGE, "search_image": IMAGE, "original": ORIGINAL})
+    def generate_with_pool(self, keywords, candidate=None):
+        plan = {"product_name": "Pill Cutter", "facts": [], "required_variants": [], "keywords": keywords}
+        with patch.object(server, "read_api_key", return_value="fake-key"), \
+                patch.object(server, "extract_keywords", return_value=([], "流量占比")), \
+                patch.object(server, "extract_search_keywords", return_value=([], "月搜索量")), \
+                patch.object(server, "plan_product", return_value=plan), \
+                patch.object(server, "ask_ark", return_value={**(candidate or CANDIDATE), "self_check": APPROVED}) as ask:
+            result = server.generate({"image": IMAGE, "search_image": IMAGE, "original": ORIGINAL})
+            self.assertEqual(ask.call_count, 1, "No extra review or regeneration calls")
+            prompt = ask.call_args.args[0][0]["text"]
+            self.assertIn('"keyword_requirements":', prompt)
+            self.assertNotIn("EACH field must contain at least THREE", prompt)
+            return result
+
+    def test_short_pools_use_actual_count_but_sufficient_pools_still_require_three(self):
+        terms = ("pill cutter", "pill splitter", "tablet cutter", "medicine cutter")
+        for size in (1, 2, 3, 4):
+            with self.subTest(size=size):
+                rows = [{"term": term, "traffic": 10, "search_volume": 100, "eligible": True}
+                        for term in terms[:size]]
+                result = self.generate_with_pool(rows)
+                checks = result["local_validation"]
+                self.assertEqual(checks["available_name_keywords"], size)
+                self.assertEqual(checks["available_highlights_keywords"], size)
+                self.assertEqual(checks["minimum_name_keywords"], min(3, size))
+                self.assertEqual(checks["minimum_highlights_keywords"], min(3, size))
+                self.assertEqual(checks["name_keyword_count"], min(3, size))
+
+    def test_sufficient_pool_cannot_claim_shortage_based_on_output(self):
+        rows = [{"term": term, "traffic": 10, "search_volume": 100, "eligible": True}
+                for term in ("pill cutter", "pill splitter", "tablet cutter")]
+        candidate = {**CANDIDATE, "item_name": CANDIDATE["item_name"].replace("Tablet Cutter", "Tablet Holder")}
+        with self.assertRaisesRegex(ValueError, "标题仅覆盖 2.*截图可用 3.*至少 3"):
+            self.generate_with_pool(rows, candidate)
+        candidate = {**CANDIDATE, "item_highlights": CANDIDATE["item_highlights"].replace("tablet cutter", "tablet holder")}
+        with self.assertRaisesRegex(ValueError, "亮点仅覆盖 2.*截图可用 3.*至少 3"):
+            self.generate_with_pool(rows, candidate)
+        with self.assertRaisesRegex(ValueError, "亮点仅覆盖 1.*截图可用 2.*至少 2"):
+            self.generate_with_pool(rows[:2], {**CANDIDATE, "item_highlights": "Pill cutter with a case"})
+
+    def test_each_field_has_its_own_quota_and_selection_rules_are_unchanged(self):
+        rows = [{"term": term, "traffic": 10, "search_volume": 100 if index == 0 else None, "eligible": True}
+                for index, term in enumerate(("pill cutter", "pill splitter", "tablet cutter"))]
+        result = self.generate_with_pool(rows)
+        self.assertEqual(result["local_validation"]["minimum_name_keywords"], 3)
+        self.assertEqual(result["local_validation"]["minimum_highlights_keywords"], 1)
+        # Category phrases may still supplement Name, exactly as before this change.
+        for index, row in enumerate(rows):
+            row.update(traffic=10 if index == 0 else None, search_volume=100)
+        result = self.generate_with_pool(rows)
+        self.assertEqual(result["local_validation"]["minimum_name_keywords"], 3)
+        self.assertEqual(result["local_validation"]["minimum_highlights_keywords"], 3)
+
+    def test_no_eligible_category_phrases_does_not_invent_search_keywords(self):
+        rows = [{"term": "pill cutter", "traffic": 10, "search_volume": None, "eligible": True},
+                {"term": "phone case", "traffic": None, "search_volume": 100, "eligible": False}]
+        result = self.generate_with_pool(rows)
+        self.assertEqual(result["local_validation"]["minimum_highlights_keywords"], 0)
+        self.assertEqual(result["highlights_independent_keywords"], [])
+
+    def test_short_pool_budgets_and_nested_variants_keep_original_counting(self):
+        for size in (1, 2):
+            rows = [{"term": term, "traffic": 10, "search_volume": 100, "eligible": True}
+                    for term in ("pill cutter", "tablet cutter")[:size]]
+            self.assertEqual(len(server.name_budgets(rows, [])[0]["phrases"]), size)
+            budget = server.highlights_budgets(rows, "with a case")[0]
+            self.assertEqual(len(budget["phrases"]), size)
+            self.assertFalse(budget["lead"].startswith(" and "))
+            self.assertEqual(budget["lead_chars"], len(budget["lead"]))
+        self.assertEqual(server.highlights_budgets([], "with a case"), [])
+        rows = [{"term": term, "traffic": 10, "search_volume": 100, "eligible": True}
+                for term in ("pill cutter", "pill cutters", "pill-cutter", "small pill cutter", "tablet cutter")]
+        checks = server.keyword_requirements(rows)
+        self.assertEqual(checks["available_name_keywords"], 2)
+        self.assertEqual(checks["minimum_highlights_keywords"], 2)
 
     @patch.object(server, "ask_ark")
     def test_wrong_metric_is_rejected(self, ask):

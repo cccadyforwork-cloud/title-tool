@@ -9,7 +9,7 @@
   <main class="app-shell">
     <header class="page-head">
       <div class="page-icon">✦</div>
-      <div><h1>商品标题生成工作台</h1><p>生成目标：标题 68–75 字符 · 亮点 100–125 字符 · 各至少 3 个独立词组</p></div>
+      <div><h1>商品标题生成工作台</h1><p>标题 68–75 字符 · 亮点 100–125 字符 · 词组足够时各至少 3 个，不足按实有数量</p></div>
       <div class="head-actions"><a class="ghost-button workflow-link" href="./workflow.html" target="_blank" rel="noopener">规则与链路 ↗</a><span class="status"><i></i> 方舟模型</span><button class="theme-button" id="themeButton" type="button" aria-label="切换深色主题"><span class="sun">☀</span><span class="moon">☾</span></button></div>
     </header>
 
@@ -78,7 +78,7 @@
         </div>
         <div class="used-keywords" id="usedKeywords"></div>
         <div class="result-bottom">
-          <div class="result-info"><span id="coverageCount">标题独立词组 0 / 至少 3 个</span><span>嵌套、单复数与连字符变体不重复计数</span></div>
+          <div class="result-info"><span id="coverageCount">按可用独立词组数量计算本次门槛</span><span>嵌套、单复数与连字符变体不重复计数</span></div>
           <button class="copy-button" id="copyBoth" type="button">复制两个字段</button>
         </div>
         <details class="audit-details"><summary>查看各环节自检与选词依据</summary><div id="checkList" class="check-list"></div><div id="factsList" class="facts-list"></div><table class="keyword-table"><thead><tr><th>关键词</th><th>流量占比</th><th>月搜索量</th><th>来源</th><th>原词组匹配</th><th>筛选依据</th></tr></thead><tbody id="keywordRows"></tbody></table></details>
@@ -95,6 +95,6 @@
     </section>
   </main>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="./app.js?v=20261027-1"></script>
+  <script src="./app.js?v=20261027-2"></script>
 </body>
 </html>

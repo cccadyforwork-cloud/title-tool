@@ -18,7 +18,7 @@ const REVIEW_LABELS = {
 const charLength = (text) => Array.from(text || '').length;
 const NAME_MIN = 68;
 const NAME_LIMIT = 75;
-const RULES_VERSION = '20261027-2';
+const RULES_VERSION = '20261102-3';
 let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;
@@ -146,31 +146,108 @@ function keywordQuotaValid(data, field) {
   const count = checks?.[`${field}_keyword_count`];
   const rows = data[`${field}_independent_keywords`];
   return Number.isInteger(available) && available >= 0 && available <= data.keywords.length
-    && minimum === Math.min(3, available) && Number.isInteger(count)
+    && minimum === Math.min(field === 'name' ? 2 : 3, available) && Number.isInteger(count)
     && Array.isArray(rows) && rows.length === count && count >= minimum && count <= available;
 }
 function keywordQuotaText(result, field) {
   const checks = result.local_validation;
   const available = checks[`available_${field}_keywords`], minimum = checks[`minimum_${field}_keywords`];
-  return `已覆盖 ${checks[`${field}_keyword_count`]} 个 · 可用 ${available} 个 · 本次至少 ${minimum} 个${available < 3 ? '（可用不足 3 个，按实有数量执行）' : '，按原排序尽量多覆盖'}`;
+  return `已覆盖 ${checks[`${field}_keyword_count`]} 个 · 可用 ${available} 个 · 本次至少 ${minimum} 个${field === 'name' ? '，优先覆盖 3 个，其余在亮点补充' : available < 3 ? '（可用不足 3 个，按实有数量执行）' : '，按原排序尽量多覆盖'}`;
 }
-async function generateWithArk(file, searchFile, original, reference) {
-  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 720000);
+const pendingGenerationKey = `title-workbench-pending:${draftScope}`;
+function readPendingGeneration() {
   try {
-    const [image, search_image] = await Promise.all([fileAsDataUrl(file), fileAsDataUrl(searchFile)]);
-    const response = await fetch('/api/generate', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: controller.signal,
-      body: JSON.stringify({ image, search_image, original, reference })
-    });
+    const jobId = sessionStorage.getItem(pendingGenerationKey) || '';
+    return /^[a-f0-9]{32}$/.test(jobId) ? jobId : '';
+  } catch { return ''; }
+}
+function pendingGeneration(jobId) {
+  try {
+    if (jobId) sessionStorage.setItem(pendingGenerationKey, jobId);
+    else sessionStorage.removeItem(pendingGenerationKey);
+  } catch { /* Current-page polling still works when browser storage is blocked. */ }
+}
+async function generationRequest(url, options, signal) {
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  signal.addEventListener('abort', abort, {once: true});
+  if (signal.aborted) abort();
+  const timeout = setTimeout(abort, 20000);
+  try {
+    const response = await fetch(url, {...options, signal: controller.signal});
     let data;
     try { data = await response.json(); }
-    catch { throw new Error('本机模型服务未启动，请运行 python3 server.py'); }
-    if (!response.ok) throw new Error(data.error || '生成失败');
+    catch { throw Object.assign(new Error(`服务响应异常（HTTP ${response.status}）`), {retryable: response.status >= 500}); }
+    if (!response.ok) {
+      const reason = response.status === 413 ? '上传截图过大，请压缩后重试'
+        : response.status === 401 || response.status === 403 ? '登录已失效或没有工具权限，请重新登录'
+        : data.error || '标题服务暂时无法连接';
+      throw Object.assign(new Error(`${reason}（HTTP ${response.status}）`), {
+        retryable: [502, 503, 504].includes(response.status) && data.job_finished !== true,
+        status: response.status, terminal: data.job_finished === true
+      });
+    }
+    return {data, status: response.status};
+  } catch (error) {
+    if (error.name === 'TypeError' || error.name === 'AbortError') error.retryable = true;
+    throw error;
+  } finally {
+    clearTimeout(timeout); signal.removeEventListener('abort', abort);
+  }
+}
+async function generationPause(signal) {
+  if (signal.aborted) throw new DOMException('Aborted', 'AbortError');
+  await new Promise((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); reject(new DOMException('Aborted', 'AbortError')); };
+    const timer = setTimeout(() => { signal.removeEventListener('abort', abort); resolve(); }, 2000);
+    signal.addEventListener('abort', abort, {once: true});
+  });
+}
+async function generateWithArk(file, searchFile, original, reference, existingJobId = '') {
+  const controller = new AbortController(); const timeout = setTimeout(() => controller.abort(), 1200000);
+  const started = Date.now();
+  try {
+    let jobId = existingJobId;
+    if (!jobId) {
+      const [image, search_image] = await Promise.all([
+        file ? fileAsDataUrl(file) : Promise.resolve(null),
+        searchFile ? fileAsDataUrl(searchFile) : Promise.resolve(null)
+      ]);
+      const request_id = Array.from(crypto.getRandomValues(new Uint8Array(16)), byte => byte.toString(16).padStart(2, '0')).join('');
+      const options = {method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({image, search_image, original, reference, async: true, request_id})};
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const response = await generationRequest('/api/generate', options, controller.signal);
+          jobId = response.data.job_id;
+          if (typeof jobId !== 'string' || !/^[a-f0-9]{32}$/.test(jobId)) throw new Error('生成任务返回异常，请刷新后重试');
+          pendingGeneration(jobId); break;
+        } catch (error) {
+          if (!error.retryable || attempt >= 2 || controller.signal.aborted) throw error;
+          el.resultStatus.textContent = '正在确认生成任务，请稍候…';
+          await generationPause(controller.signal);
+        }
+      }
+    }
+    let data;
+    while (!controller.signal.aborted) {
+      try {
+        const response = await generationRequest(`/api/generation-jobs/${jobId}`, {}, controller.signal);
+        if (response.status !== 202) { data = response.data; pendingGeneration(''); break; }
+        el.resultStatus.textContent = `${response.data.phase || '正在生成'}，请等待 · 已等待 ${Math.round((Date.now() - started) / 1000)} 秒`;
+      } catch (error) {
+        if (!error.retryable) {
+          if (error.terminal || [400, 404, 409, 410].includes(error.status)) pendingGeneration('');
+          throw error;
+        }
+        el.resultStatus.textContent = '连接暂时中断，正在等待同一次生成任务恢复…';
+      }
+      await generationPause(controller.signal);
+    }
+    if (!data) throw new DOMException('Aborted', 'AbortError');
     if (typeof data.item_name === 'string') {
       const length = charLength(data.item_name);
-      if (length < NAME_MIN || length > NAME_LIMIT) {
-        throw new Error(`生成结果未保存：Item Name 为 ${length} 个字符，要求 ${NAME_MIN}–${NAME_LIMIT} 个字符（含空格和标点）`);
-      }
+      if (length < NAME_MIN || length > NAME_LIMIT) throw new Error(`生成结果未保存：Item Name 为 ${length} 个字符，要求 ${NAME_MIN}–${NAME_LIMIT} 个字符（含空格和标点）`);
     }
     const valid = typeof data.item_name === 'string' && data.item_name.trim()
       && typeof data.item_highlights === 'string' && data.item_highlights.trim()
@@ -180,10 +257,11 @@ async function generateWithArk(file, searchFile, original, reference) {
     if (!valid) throw new Error('生成结果未通过完整自检，未保存，请重试');
     return data;
   } catch (error) {
-    if (error.name === 'AbortError') throw new Error('分析超时，结果未保存，请稍后重试');
+    if (controller.signal.aborted) throw new Error('本次等待较久，任务仍可在刷新后继续查询，请勿连续重复生成');
     throw error;
   } finally { clearTimeout(timeout); }
 }
+
 function clearResult() {
   currentResult = null; el.generatedResult.hidden = true; el.emptyResult.hidden = false;
   el.error.hidden = true; el.error.textContent = ''; el.resultStatus.textContent = '等待生成';
@@ -246,8 +324,8 @@ function renderResult(result) {
   });
   el.coverageCount.textContent = `标题：${keywordQuotaText(result, 'name')}；亮点：${keywordQuotaText(result, 'highlights')}`;
   el.checkList.replaceChildren(
-    textNode('p', `✓ 双截图：流量表“${result.traffic_header}”与类目表“${result.search_header}”；不同指标分别排序`),
-    textNode('p', `✓ 标题：${keywordQuotaText(result, 'name')}；重要变体在标题中`),
+    textNode('p', `✓ 截图识别：流量占比${result.traffic_header ? `“${result.traffic_header}”` : '未识别'}；月搜索量${result.search_header ? `“${result.search_header}”` : '未识别'}；仅按已识别指标排序`),
+    textNode('p', `✓ 标题：${keywordQuotaText(result, 'name')}；重要变体已在标题或亮点保留`),
     textNode('p', `✓ 标题长度：${charLength(result.item_name)} 个字符，已通过前后端 68–75 字符校验（含空格和标点）；不自动截断或重生成`),
     textNode('p', '亮点 100–125 字符仍由豆包在生成时控制，本地展示实际字符数'),
     textNode('p', `✓ 亮点类目搜索词：${keywordQuotaText(result, 'highlights')}；优先月搜索量`),
@@ -259,7 +337,7 @@ function renderResult(result) {
   el.factsList.append(textNode('p', `原标题：${result.product_sources?.original || el.original.value.trim()}`));
   if (result.product_sources?.reference) el.factsList.append(textNode('p', `选定参考（已确认适用）：${result.product_sources.reference}`));
   (result.facts || []).forEach(row => el.factsList.append(textNode('p', `${row.claim} ← ${row.source === 'reference' ? '选定参考标题' : '原标题'}：“${row.source_quote}”`)));
-  el.factsList.append(textNode('p', `标题必须保留的变体：${(result.required_variants || []).map(row => row.value).join(' / ') || '未识别到明确变体'}`));
+  el.factsList.append(textNode('p', `标题或亮点必须保留的变体：${(result.required_variants || []).map(row => row.value).join(' / ') || '未识别到明确变体'}`));
   el.keywordRows.replaceChildren();
   result.keywords.forEach(row => {
     const tr = document.createElement('tr');
@@ -331,21 +409,25 @@ el.reference.addEventListener('input', () => { clearResult(); saveDraftText(); }
 });
 document.addEventListener('dragover', event => event.preventDefault());
 document.addEventListener('drop', event => event.preventDefault());
-el.form.addEventListener('submit', async event => {
-  event.preventDefault(); if (busy) return;
-  const original = el.original.value.trim();
-  if (!screenshotFile) return showToast('请上传竞品流量占比截图');
-  if (!searchScreenshotFile) return showToast('请上传类目搜索量截图');
-  if (!original) { el.original.focus(); return showToast('请填写原有标题'); }
+async function displayGeneration(task) {
   clearResult(); setBusy(true); el.resultStatus.textContent = '识图 → 选词 → 豆包生成';
   try {
-    const result = await generateWithArk(screenshotFile, searchScreenshotFile, original, el.reference.value.trim()); renderResult(result);
+    const result = await task(); renderResult(result);
     const now = Date.now();
     const saved = saveHistory({id: now, item_name: result.item_name, item_highlights: result.item_highlights, covered: result.used.length,
       time: now, rules_version: result.rules_version, name_keyword_count: result.local_validation.name_keyword_count, highlights_keyword_count: result.local_validation.highlights_keyword_count, review: result.review, local_validation: result.local_validation});
     if (saved) showToast('标题与亮点已生成并保存');
   } catch (error) { el.resultStatus.textContent = '未通过或生成失败'; el.error.textContent = error.message || '生成失败'; el.error.hidden = false; showToast(el.error.textContent); }
   finally { setBusy(false); }
+}
+el.form.addEventListener('submit', async event => {
+  event.preventDefault(); if (busy) return;
+  const pending = readPendingGeneration();
+  if (pending) return displayGeneration(() => generateWithArk(null, null, '', '', pending));
+  const original = el.original.value.trim();
+  if (!screenshotFile && !searchScreenshotFile) return showToast('请上传至少一张含关键词及指标的截图');
+  if (!original) { el.original.focus(); return showToast('请填写原有标题'); }
+  await displayGeneration(() => generateWithArk(screenshotFile, searchScreenshotFile, original, el.reference.value.trim()));
 });
 [['copyName', 'item_name', '商品标题已复制'], ['copyHighlights', 'item_highlights', '商品亮点已复制'], ['copyBoth', null, '两个字段已复制']].forEach(([id, key, message]) => {
   $('#' + id).addEventListener('click', async () => { if (!currentResult) return; try { await copyText(key ? currentResult[key] : pairText(currentResult)); showToast(message); } catch (error) { showToast(error.message); } });
@@ -361,3 +443,7 @@ el.themeButton.addEventListener('click', () => setTheme(document.documentElement
 restoreDraftText();
 draftImageRestore = restoreDraftImages();
 setTheme(document.documentElement.dataset.theme || 'light'); renderHistory(); setBusy(false);
+draftImageRestore.finally(() => {
+  const pending = readPendingGeneration();
+  if (pending && !busy) void displayGeneration(() => generateWithArk(null, null, '', '', pending));
+});

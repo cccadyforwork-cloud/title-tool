@@ -25,7 +25,7 @@ function quantityLeads(name, quantity) {
 }
 const NAME_MIN = 60;
 const NAME_LIMIT = 75;
-const RULES_VERSION = '20261102-local-benefits-4';
+const RULES_VERSION = '20261102-local-benefits-5';
 let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;
@@ -336,7 +336,7 @@ function renderResult(result) {
   el.checkList.replaceChildren(
     textNode('p', `✓ 截图识别：流量占比${result.traffic_header ? `“${result.traffic_header}”` : '未识别'}；月搜索量${result.search_header ? `“${result.search_header}”` : '未识别'}；仅按已识别指标排序`),
     textNode('p', `✓ 标题：${keywordQuotaText(result, 'name')}；重要变体已在标题或亮点保留`),
-    textNode('p', `✓ 标题长度：${charLength(result.item_name)} 个字符，已通过前后端 60–75 字符校验（含空格和标点）；不自动截断；首次失败最多重新生成1次`),
+    textNode('p', `✓ 标题长度：${charLength(result.item_name)} 个字符，已通过前后端 60–75 字符校验（含空格和标点）；逐组实测选择完整候选，不自动截断；全失败最多重新生成1次`),
     textNode('p', '亮点最多125字符，已按实际字数校验；不设长度下限，优先表达具体使用价值'),
     textNode('p', `亮点类目搜索词：${keywordQuotaText(result, 'highlights')}；优先作为表达依据；变序和单复数可能未计入完整匹配，不以数量判定质量`),
     textNode('p', '✓ 计数：不跨字段拼词，嵌套、单复数和连字符变体不重复计数'),

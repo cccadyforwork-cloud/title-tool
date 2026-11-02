@@ -19,7 +19,7 @@ async function submitWithName(name, options = {}) {
   const {availableName = 3, availableHighlights = 3,
     nameCount = Math.min(3, availableName), highlightsCount = Math.min(3, availableHighlights),
     nameMinimum = Math.min(2, availableName), highlightsMinimum = 0,
-    expectedError = null, highlights = "B".repeat(60)} = options;
+    expectedError = null, original = 'Synthetic original', highlights = "B".repeat(60)} = options;
   const nodes = new Map();
   const query = selector => {
     if (!nodes.has(selector)) nodes.set(selector, node());
@@ -30,7 +30,7 @@ async function submitWithName(name, options = {}) {
   let requests = 0;
   const phrases = ['pill cutter', 'pill splitter', 'tablet cutter', 'medicine cutter', 'tablet splitter'].map(term => ({term, locations: []}));
   const answer = {
-    item_name: name, item_highlights: highlights, rules_version: '20261102-local-benefits-3',
+    item_name: name, item_highlights: highlights, rules_version: '20261102-local-benefits-4',
     name_independent_keywords: phrases.slice(0, nameCount), highlights_independent_keywords: phrases.slice(0, highlightsCount),
     keywords: phrases, used: phrases, facts: [], required_variants: [], model: 'synthetic', attempts: 1,
     traffic_header: 'Traffic Share', search_header: 'Monthly Search Volume',
@@ -55,7 +55,7 @@ async function submitWithName(name, options = {}) {
   });
   vm.runInContext(fs.readFileSync(__dirname + '/app.js', 'utf8'), context);
   vm.runInContext('screenshotFile = {}; searchScreenshotFile = {};', context);
-  query('#originalTitle').value = 'Synthetic original';
+  query('#originalTitle').value = original;
   await query('#titleForm').handlers.submit({preventDefault() {}});
   assert.equal(requests, 2, 'One submission and one result read, without duplicate generation');
   assert.equal(query('#inputFields').disabled, false, 'Form must unlock after completion');
@@ -86,5 +86,7 @@ async function submitWithName(name, options = {}) {
   await submitWithName('A'.repeat(70), {availableName: 2, nameCount: 1, expectedError: /完整自检/});
   await submitWithName('A'.repeat(70), {availableName: 1.5, nameCount: 1, expectedError: /完整自检/});
   await submitWithName('A'.repeat(70), {highlights: 'B'.repeat(126), expectedError: /超过125字符/});
+  await submitWithName('1PC ' + 'A'.repeat(66), {original:'1PC Cutter, Black'});
+  await submitWithName('A'.repeat(66) + ' 1PC', {original:'1PC Cutter, Black', expectedError:/数量必须原样放在商品标题最前面/});
   console.log('Title frontend length, natural coverage, polling and history checks passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

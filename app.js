@@ -13,12 +13,19 @@ const el = {
 const REVIEW_LABELS = {
   natural: '英文自然、词组关系清楚', facts_supported: '与人工确认资料一致，不改错信息',
   identity_clear: '标题准确表达实际商品身份', variants_preserved: '重要变体已保留',
-  allocation_ok: '亮点补充具体场景、功能与使用帮助', priority_ok: '标题选词准确，亮点自然表达使用价值', no_redundancy: '无不必要的同义词堆砌'
+  allocation_ok: '亮点补充具体场景、功能与使用帮助', priority_ok: '数量前置，亮点优先采用相关类目词及参考表达', no_redundancy: '无不必要的同义词堆砌'
 };
 const charLength = (text) => Array.from(text || '').length;
+function sellingQuantity(original) {
+  return original.match(/(?<![\w.])(?:[1-9]\d*\s*-?\s*(?:packs?|pcs?|pieces?|counts?|ct|pairs?|sets?)|(?:packs?|sets?)\s+of\s+[1-9]\d*)(?![\w.])/i)?.[0] || '';
+}
+function quantityLeads(name, quantity) {
+  return !quantity || (name.slice(0, quantity.length).toLowerCase() === quantity.toLowerCase()
+    && /^(?:\s|[,;:]|$)/.test(name.slice(quantity.length)));
+}
 const NAME_MIN = 60;
 const NAME_LIMIT = 75;
-const RULES_VERSION = '20261102-local-benefits-3';
+const RULES_VERSION = '20261102-local-benefits-4';
 let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;
@@ -152,7 +159,7 @@ function keywordQuotaValid(data, field) {
 function keywordQuotaText(result, field) {
   const checks = result.local_validation;
   const available = checks[`available_${field}_keywords`], minimum = checks[`minimum_${field}_keywords`];
-  if (field === 'highlights') return `自然覆盖 ${checks.highlights_keyword_count} 个类目词组 · 可用 ${available} 个 · 不设数量门槛`;
+  if (field === 'highlights') return `完整词组命中 ${checks.highlights_keyword_count} 个类目词组 · 可用 ${available} 个 · 不设数量门槛`;
   return `已覆盖 ${checks.name_keyword_count} 个 · 可用 ${available} 个 · 本次至少 ${minimum} 个，身份准确优先，尽量覆盖3个`;
 }
 const pendingGenerationKey = `title-workbench-pending:${draftScope}`;
@@ -250,6 +257,7 @@ async function generateWithArk(file, searchFile, original, reference, existingJo
       const length = charLength(data.item_name);
       if (length < NAME_MIN || length > NAME_LIMIT) throw new Error(`生成结果未保存：Item Name 为 ${length} 个字符，要求 ${NAME_MIN}–${NAME_LIMIT} 个字符（含空格和标点）`);
     }
+    if (typeof data.item_name === 'string' && !quantityLeads(data.item_name, sellingQuantity(el.original.value))) throw new Error('原标题数量必须原样放在商品标题最前面，结果未保存');
     if (typeof data.item_highlights === 'string' && charLength(data.item_highlights) > 125) throw new Error('亮点超过125字符，结果未保存');
     const valid = typeof data.item_name === 'string' && data.item_name.trim()
       && typeof data.item_highlights === 'string' && data.item_highlights.trim()
@@ -330,7 +338,7 @@ function renderResult(result) {
     textNode('p', `✓ 标题：${keywordQuotaText(result, 'name')}；重要变体已在标题或亮点保留`),
     textNode('p', `✓ 标题长度：${charLength(result.item_name)} 个字符，已通过前后端 60–75 字符校验（含空格和标点）；不自动截断；首次失败最多重新生成1次`),
     textNode('p', '亮点最多125字符，已按实际字数校验；不设长度下限，优先表达具体使用价值'),
-    textNode('p', `亮点类目搜索词：${keywordQuotaText(result, 'highlights')}；仅辅助选词，不以数量判定质量`),
+    textNode('p', `亮点类目搜索词：${keywordQuotaText(result, 'highlights')}；优先作为表达依据；变序和单复数可能未计入完整匹配，不以数量判定质量`),
     textNode('p', '✓ 计数：不跨字段拼词，嵌套、单复数和连字符变体不重复计数'),
     ...Object.entries(REVIEW_LABELS).map(([key, label]) => textNode('p', `${result.review[key] ? '✓' : '×'} 豆包生成自检：${label}`)),
     textNode('p', `规则 ${result.rules_version} · 生成 ${result.model} · 生成时自检 · 本次尝试 ${result.attempts} 次`, 'audit-meta')

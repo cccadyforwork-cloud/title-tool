@@ -33,7 +33,7 @@ HIGHLIGHTS_MIN = 1
 MIN_NAME_KEYWORDS = 2
 TARGET_NAME_KEYWORDS = 3
 MIN_HIGHLIGHTS_KEYWORDS = 0
-RULES_VERSION = "20261102-local-benefits-1"
+RULES_VERSION = "20261102-local-benefits-2"
 GENERATION_JOB_ROOT = None
 GENERATION_JOBS = {}
 GENERATION_JOBS_LOCK = threading.Lock()
@@ -483,11 +483,14 @@ def plan_product(original, reference, keywords, api_key):
         "use/audience group together, such as vitamins, pets and seniors, rather than silently losing "
         "one member. Distinctive functions/structure and stated uses are high-value writing material, "
         "not just background facts. First organize highlight_context around: product identity, supported "
-        "audience, concrete use scene, specific function, its direct practical benefit, and any supplied "
+        "audience, concrete use scenes and multiple uses, specific function, its direct practical benefit, and any supplied "
         "compatibility conditions or limitations. Use empty strings for unknown details. A feature's direct "
         "stated use can explain its practical benefit; never invent speed, safety, durability, performance, "
         "age groups or universal compatibility. Do not infer restrictions from missing information. "
-        "Then form highlight_focus as one short natural feature-to-benefit clause in a supported scene. "
+        "Then form highlight_focus as compact natural feature-to-benefit wording for one or more supported "
+        "scenes and uses. Multiple uses can be the core benefit: preserve meaningful supported use groups "
+        "with natural wording such as 'for A, B and C'. Do not limit the product to one scene. When space "
+        "is tight, remove duplicate synonyms and generic praise before useful distinct uses. "
         "These questions guide selection, not a checklist to cram into 125 characters. Product identity "
         "already clear in Name need not be repeated. Never start Highlights with a list of synonyms. "
         "When a reference is supplied, form this compact clause from its distinctive features and uses; "
@@ -500,7 +503,10 @@ def plan_product(original, reference, keywords, api_key):
         "supplementary attributes in Highlights when they would crowd Name. "
         "Classify EVERY supplied keyword with an explicit boolean eligible and a concise Chinese reason. "
         "The user selected the screenshot keyword pools as relevant candidates. Eligible means usable English "
-        "for the product identity. Do not reject a term because its applicable feature is absent from ORIGINAL; "
+        "for selection and keyword-counting purposes, not a global output prohibition. An ineligible "
+        "term may still appear inside a correct longer product phrase or as a supported material, use, "
+        "scene or compatibility context; it does not count toward the title quota. Judge the actual "
+        "product identity and factual claims in context. Do not reject a term because its applicable feature is absent from ORIGINAL; "
         "the selected reference information is equally accepted for features. "
         "Distinguish the actual product from handled materials, accessories and use contexts. A paper "
         "cutter is a tool, not wrapping paper; context terms may describe its use but must not replace "
@@ -700,9 +706,10 @@ def generation_prompt(original, reference, plan, requirements):
 原标题确定实际商品身份、品牌和当前变体；人工选定参考可补充功能、结构、材质和用途，不能带入竞品品牌或变体，不编造事实。
 标题从实际所售商品名称开始，不能以材料、配件、使用对象或宽泛场景词冒充商品。例如包装纸切割器须先表达cutter/tool，不能把Christmas wrapping paper写成所售商品。
 标题关键词至少按minimum_name_keywords覆盖，尽量达到target_name_keywords（可用足够时至少2个、优先3个），高流量优先但商品身份必须准确。完整词组匹配，嵌套/单复数/连字符不重复计数。按name_budgets中的实测预算写自然英文；不能为了第3个词组超过75字符。
-亮点先回答消费者最相关的问题：这是什么/适合谁，在什么具体场景使用，具体功能如何帮助完成任务或解决问题，已知哪些适用条件或限制。
-这四点用于理解和选择最有价值的信息，不要求每条都写全。优先写一个具体功能及其直接使用帮助，并结合有依据的场景或人群；标题已清楚的商品身份无需重复。
+亮点先回答消费者最相关的问题：这是什么/适合谁，用于哪些具体场景和用途，具体功能如何帮助完成任务或解决问题，已知哪些适用条件或限制。
+这四点用于理解和选择最有价值的信息，不要求每条都写全。把具体功能及直接使用帮助与有依据的场景、用途或人群自然结合；允许多场景、多用途，例如for A, B and C，不限制为一个场景。多用途本身是卖点时，优先保留有区别的真实用途，先删同义词和泛化修饰。标题已清楚的商品身份无需重复。
 highlight_context和highlight_focus是资料整理线索，须结合完整原标题、参考资料核对。只写资料支持的信息；没有提供的人群、尺寸限制或兼容范围留空，不编造安全、耐用、省时、省力或其他性能承诺。
+关键词eligible只决定是否计入选词配额，不是文字禁用名单。未参与选词的词可以作为材料、用途、场景或正确长词组的一部分自然出现，但不能把材料当成所售商品，也不能编造其他商品或功能。
 亮点不设关键词数量门槛，不要求词组逐字匹配，不以同义词列表开头。只在不损害自然表达、具体功能和使用帮助时融入适用关键词；可以调整语序和单复数。未放进标题的词不必全部补入亮点。
 有影响购买判断的重要数量、颜色、尺寸、型号等变体，必须原样保留在标题或亮点中一次；不在两个字段机械重复。用自然with/for等连接功能、用途与帮助，删除泛化赞词、重复身份和多余关键词。
 两字段不能完全重复；英文大写字母或数字开头，无中文、多余空白、孤立连接词、连续重复词或残缺括号。
@@ -765,12 +772,14 @@ def generate(payload):
             errors.append(f"标题仅覆盖 {len(name_groups)} 个独立词组，截图可用 {requirements['available_name_keywords']} 个，要求至少 {requirements['minimum_name_keywords']} 个")
         if len(highlight_groups) < requirements["minimum_highlights_keywords"]:
             errors.append(f"亮点仅覆盖 {len(highlight_groups)} 个独立类目搜索词组，截图可用 {requirements['available_highlights_keywords']} 个，要求至少 {requirements['minimum_highlights_keywords']} 个")
-        if any(row["locations"] and not row["eligible"] for row in coverage):
-            errors.append("输出包含已排除的关键词")
         try:
             review = generation_review(answer, GENERATION_MODEL)
             if not review["approved"]:
-                errors.extend(review["issues"] or ["豆包生成自检未通过"])
+                labels = {"natural": "英文自然度", "facts_supported": "资料一致性", "identity_clear": "实际商品身份",
+                          "variants_preserved": "重要变体", "allocation_ok": "标题与亮点分工",
+                          "priority_ok": "选词及使用价值表达", "no_redundancy": "重复与堆词"}
+                errors.extend(review["issues"] or ["模型自检未通过：" + "、".join(
+                    labels[key] for key in REVIEW_FIELDS if not review[key])])
         except ValueError as error:
             errors.append(str(error))
         if not errors:

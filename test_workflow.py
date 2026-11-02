@@ -135,6 +135,49 @@ class WorkflowTests(unittest.TestCase):
         self.assertIn("具体功能如何帮助", prompt)
         self.assertIn("没有提供的人群、尺寸限制或兼容范围留空", prompt)
         self.assertIn('"scene": "Gift wrapping"', prompt)
+        self.assertIn("for A, B and C", prompt)
+        self.assertIn("不限制为一个场景", prompt)
+
+    def test_unselected_material_phrase_is_allowed_in_correct_tool_name_and_multiple_uses(self):
+        rows = [{"term": term, "traffic": 10, "search_volume": 100, "eligible": eligible,
+                 "reason": "Product phrase" if eligible else "Material, not the product identity"}
+                for term, eligible in [("wrapping paper cutter", True), ("gift wrap cutter", True),
+                                       ("wrapping paper", False)]]
+        plan = {"product_name": "Wrapping Paper Cutter", "keywords": rows, "facts": [],
+                "required_variants": [{"value": "1PC"}, {"value": "Black"}],
+                "highlight_context": {"scene": "Birthdays, holidays and parties"}}
+        candidate = {"item_name": "Wrapping Paper Cutter and Gift Wrap Cutter for Holiday Gifts, 1PC Black",
+                     "item_highlights": "Slide along wrapping paper rolls to cut sheets for birthdays, holidays and parties",
+                     "self_check": APPROVED}
+        with patch.object(server, "read_api_key", return_value="fake-key"), \
+                patch.object(server, "extract_keywords", return_value=(rows, "Traffic Share")), \
+                patch.object(server, "extract_search_keywords", return_value=([], "")), \
+                patch.object(server, "plan_product", return_value=plan), \
+                patch.object(server, "ask_ark", return_value=candidate) as ask:
+            result = server.generate({"image": IMAGE, "original": "1PC Black Wrapping Paper Cutter",
+                                      "reference": "For birthdays, holidays and parties"})
+        self.assertEqual(ask.call_count, 1)
+        self.assertEqual(result["attempts"], 1)
+        self.assertEqual(result["local_validation"]["name_keyword_count"], 2)
+        material = next(row for row in result["keywords"] if row["term"] == "wrapping paper")
+        self.assertEqual(material["locations"], ["item_name", "item_highlights"])
+        self.assertFalse(material["eligible"])
+        self.assertNotIn(material, result["used"])
+        self.assertEqual(result["highlight_context"]["scene"], "Birthdays, holidays and parties")
+
+    def test_semantic_identity_failure_remains_blocking_after_one_retry(self):
+        rows = [{"term": term, "traffic": 10, "search_volume": 100, "eligible": True}
+                for term in ("pill cutter", "pill splitter", "tablet cutter")]
+        plan = {"product_name": "Pill Cutter", "keywords": rows, "facts": [], "required_variants": []}
+        bad = {**CANDIDATE, "self_check": {**APPROVED, "identity_clear": False}}
+        with patch.object(server, "read_api_key", return_value="fake-key"), \
+                patch.object(server, "extract_keywords", return_value=(rows, "Traffic Share")), \
+                patch.object(server, "extract_search_keywords", return_value=([], "")), \
+                patch.object(server, "plan_product", return_value=plan), \
+                patch.object(server, "ask_ark", return_value=bad) as ask:
+            with self.assertRaisesRegex(ValueError, "实际商品身份"):
+                server.generate({"image": IMAGE, "original": ORIGINAL})
+        self.assertEqual(ask.call_count, 2)
 
     def test_highlights_count_only_independent_eligible_category_matches(self):
         rows = [

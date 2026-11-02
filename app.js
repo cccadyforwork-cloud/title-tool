@@ -18,7 +18,7 @@ const REVIEW_LABELS = {
 const charLength = (text) => Array.from(text || '').length;
 const NAME_MIN = 68;
 const NAME_LIMIT = 75;
-const RULES_VERSION = '20261102-local-benefits-1';
+const RULES_VERSION = '20261102-local-benefits-2';
 let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;
@@ -338,7 +338,7 @@ function renderResult(result) {
   el.factsList.replaceChildren(textNode('strong', '人工确认资料来源'));
   el.factsList.append(textNode('p', `原标题：${result.product_sources?.original || el.original.value.trim()}`));
   if (result.product_sources?.reference) el.factsList.append(textNode('p', `选定参考（已确认适用）：${result.product_sources.reference}`));
-  const contextLabels = {product:'实际商品', audience:'适用人群', scene:'具体场景', function:'具体功能', benefit:'使用帮助', conditions:'适用条件与限制'};
+  const contextLabels = {product:'实际商品', audience:'适用人群', scene:'具体场景与用途', function:'具体功能', benefit:'使用帮助', conditions:'适用条件与限制'};
   for (const [key, label] of Object.entries(contextLabels)) {
     if (result.highlight_context?.[key]) el.factsList.append(textNode('p', `${label}：${result.highlight_context[key]}`));
   }
@@ -347,7 +347,7 @@ function renderResult(result) {
   el.keywordRows.replaceChildren();
   result.keywords.forEach(row => {
     const tr = document.createElement('tr');
-    [row.term, row.traffic == null ? '—' : `${row.traffic}%`, row.search_volume == null ? '—' : row.search_volume.toLocaleString('en-US'), sourceLabel(row), row.eligible ? `${fieldLabel(row.locations)}${independent.has(row.term.toLowerCase()) ? ' · 独立计数' : ''}` : '已排除', row.reason].forEach(value => tr.append(textNode('td', value)));
+    [row.term, row.traffic == null ? '—' : `${row.traffic}%`, row.search_volume == null ? '—' : row.search_volume.toLocaleString('en-US'), sourceLabel(row), row.eligible ? `${fieldLabel(row.locations)}${independent.has(row.term.toLowerCase()) ? ' · 独立计数' : ''}` : (row.locations?.length ? `${fieldLabel(row.locations)} · 语境匹配，不计词数` : '不参与关键词计数'), row.reason].forEach(value => tr.append(textNode('td', value)));
     el.keywordRows.append(tr);
   });
   el.emptyResult.hidden = true; el.generatedResult.hidden = false; el.resultStatus.textContent = '已生成';

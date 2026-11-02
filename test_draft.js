@@ -2,6 +2,7 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
+const {File, Blob} = require('node:buffer');
 
 function node() {
   return {

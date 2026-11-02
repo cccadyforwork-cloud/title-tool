@@ -12,13 +12,13 @@ const el = {
 };
 const REVIEW_LABELS = {
   natural: '英文自然、词组关系清楚', facts_supported: '与人工确认资料一致，不改错信息',
-  identity_clear: '商品标题清楚表达商品身份', variants_preserved: '重要变体已保留',
-  allocation_ok: '标题与亮点分工合理', priority_ok: '相关高流量词优先安排', no_redundancy: '无不必要的同义词堆砌'
+  identity_clear: '标题准确表达实际商品身份', variants_preserved: '重要变体已保留',
+  allocation_ok: '亮点补充具体场景、功能与使用帮助', priority_ok: '标题选词准确，亮点自然表达使用价值', no_redundancy: '无不必要的同义词堆砌'
 };
 const charLength = (text) => Array.from(text || '').length;
 const NAME_MIN = 68;
 const NAME_LIMIT = 75;
-const RULES_VERSION = '20261102-3';
+const RULES_VERSION = '20261102-local-benefits-1';
 let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;
@@ -146,13 +146,14 @@ function keywordQuotaValid(data, field) {
   const count = checks?.[`${field}_keyword_count`];
   const rows = data[`${field}_independent_keywords`];
   return Number.isInteger(available) && available >= 0 && available <= data.keywords.length
-    && minimum === Math.min(field === 'name' ? 2 : 3, available) && Number.isInteger(count)
+    && minimum === (field === 'name' ? Math.min(2, available) : 0) && Number.isInteger(count)
     && Array.isArray(rows) && rows.length === count && count >= minimum && count <= available;
 }
 function keywordQuotaText(result, field) {
   const checks = result.local_validation;
   const available = checks[`available_${field}_keywords`], minimum = checks[`minimum_${field}_keywords`];
-  return `已覆盖 ${checks[`${field}_keyword_count`]} 个 · 可用 ${available} 个 · 本次至少 ${minimum} 个${field === 'name' ? '，优先覆盖 3 个，其余在亮点补充' : available < 3 ? '（可用不足 3 个，按实有数量执行）' : '，按原排序尽量多覆盖'}`;
+  if (field === 'highlights') return `自然覆盖 ${checks.highlights_keyword_count} 个类目词组 · 可用 ${available} 个 · 不设数量门槛`;
+  return `已覆盖 ${checks.name_keyword_count} 个 · 可用 ${available} 个 · 本次至少 ${minimum} 个，身份准确优先，尽量覆盖3个`;
 }
 const pendingGenerationKey = `title-workbench-pending:${draftScope}`;
 function readPendingGeneration() {
@@ -249,6 +250,7 @@ async function generateWithArk(file, searchFile, original, reference, existingJo
       const length = charLength(data.item_name);
       if (length < NAME_MIN || length > NAME_LIMIT) throw new Error(`生成结果未保存：Item Name 为 ${length} 个字符，要求 ${NAME_MIN}–${NAME_LIMIT} 个字符（含空格和标点）`);
     }
+    if (typeof data.item_highlights === 'string' && charLength(data.item_highlights) > 125) throw new Error('亮点超过125字符，结果未保存');
     const valid = typeof data.item_name === 'string' && data.item_name.trim()
       && typeof data.item_highlights === 'string' && data.item_highlights.trim()
       && Array.isArray(data.keywords) && Array.isArray(data.used) && data.local_validation?.passed === true
@@ -300,7 +302,7 @@ function sourceLabel(row) { return (row.sources || []).map(source => source === 
 function renderResult(result) {
   currentResult = result; el.name.textContent = result.item_name; el.highlights.textContent = result.item_highlights;
   el.nameCount.textContent = `${charLength(result.item_name)} 字符（68–75）`;
-  el.highlightsCount.textContent = `${charLength(result.item_highlights)} 字符（100–125）`;
+  el.highlightsCount.textContent = `${charLength(result.item_highlights)} 字符（最多125）`;
   const independent = new Set(result.name_independent_keywords.map(row => row.term.toLowerCase()));
   el.usedKeywords.replaceChildren();
   const keywordFields = [
@@ -326,9 +328,9 @@ function renderResult(result) {
   el.checkList.replaceChildren(
     textNode('p', `✓ 截图识别：流量占比${result.traffic_header ? `“${result.traffic_header}”` : '未识别'}；月搜索量${result.search_header ? `“${result.search_header}”` : '未识别'}；仅按已识别指标排序`),
     textNode('p', `✓ 标题：${keywordQuotaText(result, 'name')}；重要变体已在标题或亮点保留`),
-    textNode('p', `✓ 标题长度：${charLength(result.item_name)} 个字符，已通过前后端 68–75 字符校验（含空格和标点）；不自动截断或重生成`),
-    textNode('p', '亮点 100–125 字符仍由豆包在生成时控制，本地展示实际字符数'),
-    textNode('p', `✓ 亮点类目搜索词：${keywordQuotaText(result, 'highlights')}；优先月搜索量`),
+    textNode('p', `✓ 标题长度：${charLength(result.item_name)} 个字符，已通过前后端 68–75 字符校验（含空格和标点）；不自动截断；首次失败最多重新生成1次`),
+    textNode('p', '亮点最多125字符，已按实际字数校验；不设长度下限，优先表达具体使用价值'),
+    textNode('p', `亮点类目搜索词：${keywordQuotaText(result, 'highlights')}；仅辅助选词，不以数量判定质量`),
     textNode('p', '✓ 计数：不跨字段拼词，嵌套、单复数和连字符变体不重复计数'),
     ...Object.entries(REVIEW_LABELS).map(([key, label]) => textNode('p', `${result.review[key] ? '✓' : '×'} 豆包生成自检：${label}`)),
     textNode('p', `规则 ${result.rules_version} · 生成 ${result.model} · 生成时自检 · 本次尝试 ${result.attempts} 次`, 'audit-meta')
@@ -336,6 +338,10 @@ function renderResult(result) {
   el.factsList.replaceChildren(textNode('strong', '人工确认资料来源'));
   el.factsList.append(textNode('p', `原标题：${result.product_sources?.original || el.original.value.trim()}`));
   if (result.product_sources?.reference) el.factsList.append(textNode('p', `选定参考（已确认适用）：${result.product_sources.reference}`));
+  const contextLabels = {product:'实际商品', audience:'适用人群', scene:'具体场景', function:'具体功能', benefit:'使用帮助', conditions:'适用条件与限制'};
+  for (const [key, label] of Object.entries(contextLabels)) {
+    if (result.highlight_context?.[key]) el.factsList.append(textNode('p', `${label}：${result.highlight_context[key]}`));
+  }
   (result.facts || []).forEach(row => el.factsList.append(textNode('p', `${row.claim} ← ${row.source === 'reference' ? '选定参考标题' : '原标题'}：“${row.source_quote}”`)));
   el.factsList.append(textNode('p', `标题或亮点必须保留的变体：${(result.required_variants || []).map(row => row.value).join(' / ') || '未识别到明确变体'}`));
   el.keywordRows.replaceChildren();

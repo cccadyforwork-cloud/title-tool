@@ -18,8 +18,8 @@ function node() {
 async function submitWithName(name, options = {}) {
   const {availableName = 3, availableHighlights = 3,
     nameCount = Math.min(3, availableName), highlightsCount = Math.min(3, availableHighlights),
-    nameMinimum = Math.min(3, availableName), highlightsMinimum = Math.min(3, availableHighlights),
-    expectedError = null} = options;
+    nameMinimum = Math.min(2, availableName), highlightsMinimum = 0,
+    expectedError = null, highlights = "B".repeat(60)} = options;
   const nodes = new Map();
   const query = selector => {
     if (!nodes.has(selector)) nodes.set(selector, node());
@@ -30,7 +30,7 @@ async function submitWithName(name, options = {}) {
   let requests = 0;
   const phrases = ['pill cutter', 'pill splitter', 'tablet cutter', 'medicine cutter', 'tablet splitter'].map(term => ({term, locations: []}));
   const answer = {
-    item_name: name, item_highlights: 'B'.repeat(110), rules_version: '20261027-2',
+    item_name: name, item_highlights: highlights, rules_version: '20261102-local-benefits-1',
     name_independent_keywords: phrases.slice(0, nameCount), highlights_independent_keywords: phrases.slice(0, highlightsCount),
     keywords: phrases, used: phrases, facts: [], required_variants: [], model: 'synthetic', attempts: 1,
     traffic_header: 'Traffic Share', search_header: 'Monthly Search Volume',
@@ -46,14 +46,18 @@ async function submitWithName(name, options = {}) {
     window: {}, location: {search: ''}, URLSearchParams,
     localStorage: {getItem: key => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value)},
     FileReader: class { readAsDataURL() { this.result = 'data:image/png;base64,Zml4dHVyZQ=='; this.onload(); } },
-    AbortController, setTimeout: () => 1, clearTimeout() {},
-    fetch: async () => { requests++; return {ok: true, json: async () => answer}; }
+    AbortController, DOMException, crypto: require('node:crypto').webcrypto, Uint8Array,
+    sessionStorage: {getItem:()=>null,setItem(){},removeItem(){}},
+    setTimeout: (callback, ms) => { if(ms === 2000)queueMicrotask(callback); return 1; }, clearTimeout() {},
+    fetch: async (url) => { requests++;
+      const isSubmit = url === '/api/generate';
+      return {ok: true, status: isSubmit ? 202 : 200, json: async () => isSubmit ? {job_id:'a'.repeat(32)} : answer}; }
   });
   vm.runInContext(fs.readFileSync(__dirname + '/app.js', 'utf8'), context);
   vm.runInContext('screenshotFile = {}; searchScreenshotFile = {};', context);
   query('#originalTitle').value = 'Synthetic original';
   await query('#titleForm').handlers.submit({preventDefault() {}});
-  assert.equal(requests, 1, 'Length failure must not trigger another API request');
+  assert.equal(requests, 2, 'One submission and one result read, without duplicate generation');
   assert.equal(query('#inputFields').disabled, false, 'Form must unlock after completion');
   if (!expectedError && Array.from(name).length >= 68 && Array.from(name).length <= 75) {
     assert.equal(query('#generatedResult').hidden, false);
@@ -77,9 +81,10 @@ async function submitWithName(name, options = {}) {
   for (const [availableName, availableHighlights] of [[1, 1], [2, 2], [5, 1], [1, 5], [3, 0], [5, 5]]) {
     await submitWithName('A'.repeat(70), {availableName, availableHighlights});
   }
-  await submitWithName('A'.repeat(70), {availableName: 3, nameCount: 2, nameMinimum: 2, expectedError: /完整自检/});
-  await submitWithName('A'.repeat(70), {availableHighlights: 3, highlightsCount: 2, expectedError: /完整自检/});
+  await submitWithName('A'.repeat(70), {availableName: 3, nameCount: 2, nameMinimum: 2});
+  await submitWithName('A'.repeat(70), {availableHighlights: 3, highlightsCount: 0});
   await submitWithName('A'.repeat(70), {availableName: 2, nameCount: 1, expectedError: /完整自检/});
   await submitWithName('A'.repeat(70), {availableName: 1.5, nameCount: 1, expectedError: /完整自检/});
-  console.log('Title frontend: 17 length, quota and save regressions passed');
+  await submitWithName('A'.repeat(70), {highlights: 'B'.repeat(126), expectedError: /超过125字符/});
+  console.log('Title frontend length, natural coverage, polling and history checks passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

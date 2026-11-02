@@ -25,7 +25,7 @@ function quantityLeads(name, quantity) {
 }
 const NAME_MIN = 60;
 const NAME_LIMIT = 75;
-const RULES_VERSION = '20261102-benefits-5';
+const RULES_VERSION = '20261102-benefits-6';
 let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;
@@ -153,7 +153,7 @@ function keywordQuotaValid(data, field) {
   const count = checks?.[`${field}_keyword_count`];
   const rows = data[`${field}_independent_keywords`];
   return Number.isInteger(available) && available >= 0 && available <= data.keywords.length
-    && minimum === (field === 'name' ? Math.min(2, available) : 0) && Number.isInteger(count)
+    && minimum === (field === 'name' ? 2 : 0) && Number.isInteger(count)
     && Array.isArray(rows) && rows.length === count && count >= minimum && count <= available;
 }
 function keywordQuotaText(result, field) {
@@ -258,6 +258,8 @@ async function generateWithArk(file, searchFile, original, reference, existingJo
       if (length < NAME_MIN || length > NAME_LIMIT) throw new Error(`生成结果未保存：Item Name 为 ${length} 个字符，要求 ${NAME_MIN}–${NAME_LIMIT} 个字符（含空格和标点）`);
     }
     if (typeof data.item_name === 'string' && !quantityLeads(data.item_name, sellingQuantity(el.original.value))) throw new Error('原标题数量必须原样放在商品标题最前面，结果未保存');
+    const primaryPolicy = data.title_traffic_priority;
+    if (primaryPolicy?.minimum_primary_keywords === 1 && (!Array.isArray(data.primary_traffic_keywords) || !data.primary_traffic_keywords.length)) throw new Error('标题未覆盖主要流量词，结果未保存');
     if (typeof data.item_highlights === 'string' && charLength(data.item_highlights) > 125) throw new Error('亮点超过125字符，结果未保存');
     const valid = typeof data.item_name === 'string' && data.item_name.trim()
       && typeof data.item_highlights === 'string' && data.item_highlights.trim()
@@ -328,7 +330,8 @@ function renderResult(result) {
       const metric = field.metric === 'traffic'
         ? (row.traffic == null ? '占比未提供' : `流量占比 ${row.traffic}%`)
         : (row.search_volume == null ? '月搜索量未提供' : `月搜索量 ${row.search_volume.toLocaleString('en-US')}`);
-      chip.append(textNode('b', metric)); terms.append(chip);
+      chip.append(textNode('b', metric));
+      if (field.key === 'item_name' && row.primary_traffic === true) chip.append(textNode('b', '主要流量词')); terms.append(chip);
     });
     line.append(terms); el.usedKeywords.append(line);
   });
@@ -337,6 +340,7 @@ function renderResult(result) {
     textNode('p', `✓ 截图识别：流量占比${result.traffic_header ? `“${result.traffic_header}”` : '未识别'}；月搜索量${result.search_header ? `“${result.search_header}”` : '未识别'}；仅按已识别指标排序`),
     textNode('p', `✓ 标题：${keywordQuotaText(result, 'name')}；重要变体已在标题或亮点保留`),
     textNode('p', `✓ 标题长度：${charLength(result.item_name)} 个字符，已通过前后端 60–75 字符校验（含空格和标点）；逐组实测选择完整候选，不自动截断；全失败最多重新生成1次`),
+    textNode('p', `主要流量词：${(result.primary_traffic_keywords || []).join('、') || '未提供可核对流量占比'}；有标记按标记选至少1个，无标记选最高占比词`),
     textNode('p', '亮点最多125字符，已按实际字数校验；不设长度下限，优先表达具体使用价值'),
     textNode('p', `亮点类目搜索词：${keywordQuotaText(result, 'highlights')}；优先作为表达依据；变序和单复数可能未计入完整匹配，不以数量判定质量`),
     textNode('p', '✓ 计数：不跨字段拼词，嵌套、单复数和连字符变体不重复计数'),

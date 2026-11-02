@@ -33,7 +33,7 @@ HIGHLIGHTS_MIN = 1
 MIN_NAME_KEYWORDS = 2
 TARGET_NAME_KEYWORDS = 3
 MIN_HIGHLIGHTS_KEYWORDS = 0
-RULES_VERSION = "20261102-benefits-5"
+RULES_VERSION = "20261102-benefits-6"
 GENERATION_JOB_ROOT = None
 GENERATION_JOBS = {}
 GENERATION_JOBS_LOCK = threading.Lock()
@@ -342,6 +342,11 @@ def normalize_keywords(rows):
         key = term.casefold()
         if key not in keywords or traffic > keywords[key]["traffic"]:
             keywords[key] = {"term": term, "traffic": traffic}
+        label = clean_text(row.get("traffic_label"))
+        if label:
+            keywords[key]["traffic_label"] = label
+        if row.get("primary_traffic") is True or label == "主要流量词":
+            keywords[key]["primary_traffic"] = True
     return sorted(keywords.values(), key=lambda item: -item["traffic"])[:20]
 
 
@@ -374,12 +379,13 @@ def extract_keywords(image, api_key):
             "{\"traffic_column_present\":false,\"header_text\":\"\",\"keywords\":[]}. "
             "Otherwise copy each legible keyword and its SAME-ROW traffic share. In header_text, quote the "
             "visible label or context that identifies the metric; if no literal label is visible, describe the visible context briefly. "
+            "Also read each row's traffic-role label: copy traffic_label exactly and set primary_traffic=true only when explicitly labelled 主要流量词 (primary/main traffic keyword); conversion or long-tail labels are not primary. If unlabelled, use an empty label and false; never infer a label from percentage. "
             "Copy traffic_text as the visible percentage with its original precision. NEVER concatenate the "
             "grey traffic count on the next line with the percentage. If any percentage digit is hidden "
             "behind an icon or unreadable, skip that row. Ignore grey counts and Chinese "
             "translations below the keyword, skip dashes and unreadable values, preserve spelling and fractions. "
             "Return JSON only: {\"traffic_column_present\":true,\"header_text\":\"exact visible header\","
-            "\"keywords\":[{\"term\":\"pill cutter\",\"traffic_text\":\"89.66%\"}]}"
+            "\"keywords\":[{\"term\":\"pill cutter\",\"traffic_text\":\"89.66%\",\"traffic_label\":\"主要流量词\",\"primary_traffic\":true}]}"
         )}, {"type": "input_image", "image_url": image},
     ], api_key)
     header = clean_text(answer.get("header_text")) if isinstance(answer, dict) else ""
@@ -503,7 +509,7 @@ def plan_product(original, reference, keywords, api_key):
         "variant attributes in Highlights to reserve Name for high-traffic phrases; only selling quantity must lead Name. "
         "Classify EVERY supplied keyword with an explicit boolean eligible and a concise Chinese reason. "
         "The user selected the screenshot keyword pools as relevant candidates. Eligible means usable English "
-        "for selection and keyword-counting purposes, not a global output prohibition. An ineligible "
+        "for selection and keyword-counting purposes, not a global output prohibition. Keywords describing supported handled materials or uses (e.g. Christmas wrapping paper for a paper cutter) are eligible in a natural for/with use context; they need not name the sold product. Do not discard primary traffic words just because they describe uses, but keep the actual sold product identity clear.  An ineligible "
         "term may still appear inside a correct longer product phrase or as a supported material, use, "
         "scene or compatibility context; it does not count toward the title quota. Judge the actual "
         "product identity and factual claims in context. Do not reject a term because its applicable feature is absent from ORIGINAL; "
@@ -668,21 +674,21 @@ def keyword_requirements(keywords):
         row for row in keywords if row["eligible"] and row.get("search_volume") is not None]))
     return {"available_name_keywords": name_available,
             "available_highlights_keywords": highlights_available,
-            "minimum_name_keywords": min(MIN_NAME_KEYWORDS, name_available),
+            "minimum_name_keywords": MIN_NAME_KEYWORDS,
             "target_name_keywords": min(TARGET_NAME_KEYWORDS, name_available),
             "minimum_highlights_keywords": min(MIN_HIGHLIGHTS_KEYWORDS, highlights_available)}
 
 
 def title_traffic_priority(keywords, quantity=""):
-    """Require a highest-share applicable phrase when it fits the title budget."""
-    ranked = sorted([row for row in keywords if row["eligible"] and row.get("traffic") is not None], key=keyword_rank)
-    if not ranked:
-        return {"ranked_traffic_phrases": [], "required_top_phrases": []}
-    highest = ranked[0]["traffic"]
-    prefix_cost = len(quantity) + 1 if quantity else 0
-    return {"ranked_traffic_phrases": [{"term": row["term"], "traffic_share": row["traffic"]} for row in ranked],
-            "required_top_phrases": [row["term"] for row in ranked if row["traffic"] == highest
-                                     and len(row["term"]) + prefix_cost <= NAME_LIMIT]}
+    """Preserve screenshot roles; use highest actual traffic only if none are labelled."""
+    ranked = sorted([row for row in keywords if row.get("traffic") is not None], key=keyword_rank)
+    marked = [row for row in ranked if row.get("primary_traffic") is True]
+    core = marked or [row for row in ranked if row["traffic"] == ranked[0]["traffic"]]
+    return {"ranked_traffic_phrases": [{"term": row["term"], "traffic_share": row["traffic"],
+                                      "primary_traffic": row.get("primary_traffic") is True} for row in ranked],
+            "required_top_phrases": [row["term"] for row in core],
+            "primary_source": "screenshot_label" if marked else "highest_traffic" if ranked else "unavailable",
+            "minimum_primary_keywords": 1 if core else 0}
 
 
 def name_budgets(keywords, variants):
@@ -737,7 +743,8 @@ def generation_prompt(original, reference, plan, requirements):
 标题必须60–75字符，目标65–70；亮点非空且最多125字符，不设100字符下限，不为凑长度添加内容。字母、数字、空格和标点都计1字符。
 原标题确定实际商品身份、品牌和当前变体；人工选定参考可补充功能、结构、材质和用途，不能带入竞品品牌或变体，不编造事实。
 原标题有明确销售数量时，必须将quantity_prefix原样放在标题最前面，随后紧接实际商品名称，例如1PC Wrapping Paper Cutter；原标题没有数量则不新增，不能用参考标题数量代替。不能以材料、配件、使用对象或宽泛场景词冒充商品。例如包装纸切割器须先表达cutter/tool，不能把Christmas wrapping paper写成所售商品。
-标题首要目标是引流：按title_traffic_priority.ranked_traffic_phrases中流量占比从高到低选词，最高流量的适用词优先，required_top_phrases非空时至少完整覆盖其中一个（并列最高可选其一）。不能用占比未提供的同义词或功能修饰替代可用的更高流量词；有余量再补后续高流量词，已知流量词不足时才用类目词补足。受75字符、实际商品身份和数量前置限制时，先减少功能、场景、颜色等可放亮点的信息，不为凑第3个低优先词挤掉最高流量词。
+标题两项独立硬规则：总关键词至少覆盖2个（可用不足2个时明确说明，不凑词），且必须完整覆盖required_top_phrases中至少1个主要流量词。有截图“主要流量词”标记时从这些词选；没有标记才用全体流量占比最高的词，不能先筛掉高流量词再用低占比词替代。不因字符紧张免除主要词要求。主要词可通过for/with等用途结构使用，如切割器用于Christmas wrapping paper，不能把材料当作所售商品。
+标题首要目标是引流：按title_traffic_priority.ranked_traffic_phrases中流量占比从高到低选词，主要流量词优先，required_top_phrases非空时至少完整覆盖其中一个。不能用占比未提供的同义词或功能修饰替代可用的更高流量词；有余量再补后续高流量词，已知流量词不足时才用类目词补足。受75字符、实际商品身份和数量前置限制时，先减少功能、场景、颜色等可放亮点的信息，不为凑第3个低优先词挤掉最高流量词。
 标题关键词至少按minimum_name_keywords覆盖，尽量达到target_name_keywords（可用足够时至少2个、优先3个），高流量优先但商品身份必须准确。完整词组匹配，嵌套/单复数/连字符不重复计数。按name_budgets中的实测预算写自然英文；不能为了第3个词组超过75字符。
 亮点写作顺序：先从highlight_materials.category_search_phrases按月搜索量和适用性选择核心表达，目标自然使用1–2个相关类目词；再优先借鉴竞品参考中的具体功能、结构、用途短语，保留有意义的原词及限定词，最后用下列四点组织自然句子。不能直接忽略类目词和参考表达后自行泛写。
 亮点回答消费者最相关的问题：这是什么/适合谁，用于哪些具体场景和用途，具体功能如何帮助完成任务或解决问题，已知哪些适用条件或限制。
@@ -773,7 +780,7 @@ def validate_generated_candidate(answer, plan, requirements, quantity, traffic_p
     errors.extend(local_checks(name, highlights, plan["required_variants"], quantity))
     top_phrases = traffic_priority["required_top_phrases"]
     if top_phrases and not any(contains_phrase(name, term) for term in top_phrases):
-        errors.append("标题必须优先覆盖最高流量的适用词：" + " / ".join(top_phrases))
+        errors.append("标题必须覆盖至少1个主要流量词（有标记按标记，无标记按最高占比）：" + " / ".join(top_phrases))
     coverage = keyword_coverage(plan["keywords"], name, highlights)
     used = [row for row in coverage if row["eligible"] and row["locations"]]
     name_groups = independent_keywords([row for row in used if "item_name" in row["locations"]])
@@ -828,7 +835,11 @@ def generate(payload):
     keywords = merge_keywords(traffic_keywords, search_keywords)
     plan = plan_product(original, reference, keywords, api_key)
     requirements = keyword_requirements(plan["keywords"])
+    if requirements["available_name_keywords"] < MIN_NAME_KEYWORDS:
+        raise ValueError("截图可用独立关键词不足2个，请补充资料；标题至少覆盖2个关键词")
     traffic_priority = title_traffic_priority(plan["keywords"], selling_quantity(original))
+    if not traffic_priority["required_top_phrases"]:
+        raise ValueError("未识别到可核对的流量占比词，无法满足主要流量词要求；请补充带流量占比的截图")
     base_prompt = generation_prompt(original, reference, plan, requirements)
     prompt = base_prompt
     for attempt in range(1, 3):
@@ -891,7 +902,8 @@ def generate(payload):
                                  "name_length_passed": True,
                                  "length_policy": "name_60_75_highlights_max125"},
             "review": review, "model": GENERATION_MODEL, "rules_version": RULES_VERSION, "attempts": attempt,
-            "candidate_count": candidate_count, "valid_candidate_count": len(valid_candidates)}
+            "candidate_count": candidate_count, "valid_candidate_count": len(valid_candidates),
+            "primary_traffic_keywords": [term for term in traffic_priority["required_top_phrases"] if contains_phrase(name, term)]}
 
 
 class Handler(SimpleHTTPRequestHandler):

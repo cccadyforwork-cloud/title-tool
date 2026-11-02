@@ -18,7 +18,7 @@ function node() {
 async function submitWithName(name, options = {}) {
   const {availableName = 3, availableHighlights = 3,
     nameCount = Math.min(3, availableName), highlightsCount = Math.min(3, availableHighlights),
-    nameMinimum = Math.min(2, availableName), highlightsMinimum = 0,
+    nameMinimum = 2, highlightsMinimum = 0,
     expectedError = null, original = 'Synthetic original', highlights = "B".repeat(60)} = options;
   const nodes = new Map();
   const query = selector => {
@@ -30,7 +30,7 @@ async function submitWithName(name, options = {}) {
   let requests = 0;
   const phrases = ['pill cutter', 'pill splitter', 'tablet cutter', 'medicine cutter', 'tablet splitter'].map(term => ({term, locations: []}));
   const answer = {
-    item_name: name, item_highlights: highlights, rules_version: '20261102-benefits-5',
+    item_name: name, item_highlights: highlights, rules_version: '20261102-benefits-6',
     name_independent_keywords: phrases.slice(0, nameCount), highlights_independent_keywords: phrases.slice(0, highlightsCount),
     keywords: phrases, used: phrases, facts: [], required_variants: [], model: 'synthetic', attempts: 1,
     traffic_header: 'Traffic Share', search_header: 'Monthly Search Volume',
@@ -79,7 +79,7 @@ async function submitWithName(name, options = {}) {
   await submitWithName('A'.repeat(63) + ' B-C.');
   await submitWithName('A'.repeat(74) + '😀'); // Unicode code points agree with Python len, not UTF-16 units.
   for (const [availableName, availableHighlights] of [[1, 1], [2, 2], [5, 1], [1, 5], [3, 0], [5, 5]]) {
-    await submitWithName('A'.repeat(70), {availableName, availableHighlights});
+    await submitWithName('A'.repeat(70), {availableName, availableHighlights, expectedError: availableName < 2 ? /完整自检/ : null});
   }
   await submitWithName('A'.repeat(70), {availableName: 3, nameCount: 2, nameMinimum: 2});
   await submitWithName('A'.repeat(70), {availableHighlights: 3, highlightsCount: 0});

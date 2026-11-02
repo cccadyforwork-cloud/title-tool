@@ -156,13 +156,35 @@ class WorkflowTests(unittest.TestCase):
                 {"term": "tablet cutter", "eligible": True, "traffic": 2, "search_volume": 50},
                 {"term": "wrong product", "eligible": False, "traffic": 50, "search_volume": 10}]
         policy = server.title_traffic_priority(rows)
-        self.assertEqual(policy["required_top_phrases"], ["pill cutter"])
-        self.assertEqual([row["term"] for row in policy["ranked_traffic_phrases"]], ["pill cutter", "tablet cutter"])
+        self.assertEqual(policy["required_top_phrases"], ["wrong product"])
+        self.assertEqual([row["term"] for row in policy["ranked_traffic_phrases"]], ["wrong product", "pill cutter", "tablet cutter"])
         candidate = {**CANDIDATE, "item_name": CANDIDATE["item_name"].replace("Pill Cutter", "Pill Holder")}
-        with self.assertRaisesRegex(ValueError, "最高流量的适用词：pill cutter"):
+        with self.assertRaisesRegex(ValueError, "主要流量词.*wrong product"):
             self.generate_with_pool(rows, candidate)
         self.assertEqual(server.title_traffic_priority([{**rows[0], "traffic": None}])["required_top_phrases"], [])
-        self.assertEqual(server.title_traffic_priority([{**rows[0], "term": "A" * 75}], "1PC")["required_top_phrases"], [])
+        self.assertEqual(server.title_traffic_priority([{**rows[0], "term": "A" * 75}], "1PC")["required_top_phrases"], ["A" * 75])
+
+    def test_fewer_than_two_keywords_requires_more_input(self):
+        with self.assertRaisesRegex(ValueError, "不足2个"):
+            self.generate_with_pool([{"term": "pill cutter", "traffic": 10, "search_volume": None, "eligible": True}])
+
+    def test_screenshot_primary_label_survives_merge_and_cannot_be_replaced(self):
+        rows = server.normalize_keywords([
+            {"term": "christmas wrapping paper", "traffic": 14.49, "traffic_label": "主要流量词"},
+            {"term": "wrapping paper", "traffic": 12.08, "primary_traffic": True},
+            {"term": "wrapping paper cutter", "traffic": 3.63, "traffic_label": "转化承接词"}])
+        merged = server.merge_keywords(rows, [{"term": "wrapping paper cutter", "search_volume": 65599}])
+        for row in merged: row["eligible"] = True
+        policy = server.title_traffic_priority(merged)
+        self.assertEqual(policy["primary_source"], "screenshot_label")
+        self.assertEqual(policy["required_top_phrases"], ["christmas wrapping paper", "wrapping paper"])
+        self.assertEqual(policy["minimum_primary_keywords"], 1)
+        no_labels = [{"term": "christmas wrapping paper", "traffic": 14.49, "eligible": False},
+                     {"term": "wrapping paper cutter", "traffic": 3.63, "eligible": True}]
+        self.assertEqual(server.title_traffic_priority(no_labels)["required_top_phrases"], ["christmas wrapping paper"])
+        self.assertEqual(server.title_traffic_priority(no_labels)["primary_source"], "highest_traffic")
+        marked_low = [{**no_labels[0], "primary_traffic": False}, {**no_labels[1], "primary_traffic": True}]
+        self.assertEqual(server.title_traffic_priority(marked_low)["required_top_phrases"], ["wrapping paper cutter"])
 
     def test_highlight_materials_rank_category_terms_and_keep_reference_quotes(self):
         plan = {"keywords": [
@@ -260,7 +282,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_short_pools_use_actual_count_but_sufficient_pools_still_require_three(self):
         terms = ("pill cutter", "pill splitter", "tablet cutter", "medicine cutter")
-        for size in (1, 2, 3, 4):
+        for size in (2, 3, 4):
             with self.subTest(size=size):
                 rows = [{"term": term, "traffic": 10, "search_volume": 100, "eligible": True}
                         for term in terms[:size]]
@@ -298,6 +320,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_no_eligible_category_phrases_does_not_invent_search_keywords(self):
         rows = [{"term": "pill cutter", "traffic": 10, "search_volume": None, "eligible": True},
+                {"term": "tablet cutter", "traffic": 5, "search_volume": None, "eligible": True},
                 {"term": "phone case", "traffic": None, "search_volume": 100, "eligible": False}]
         result = self.generate_with_pool(rows)
         self.assertEqual(result["local_validation"]["minimum_highlights_keywords"], 0)

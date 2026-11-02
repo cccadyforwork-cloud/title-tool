@@ -25,7 +25,7 @@ function quantityLeads(name, quantity) {
 }
 const NAME_MIN = 60;
 const NAME_LIMIT = 75;
-const RULES_VERSION = '20261102-local-benefits-5';
+const RULES_VERSION = '20261102-benefits-5';
 let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;

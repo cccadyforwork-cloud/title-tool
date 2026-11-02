@@ -30,7 +30,7 @@ async function submitWithName(name, options = {}) {
   let requests = 0;
   const phrases = ['pill cutter', 'pill splitter', 'tablet cutter', 'medicine cutter', 'tablet splitter'].map(term => ({term, locations: []}));
   const answer = {
-    item_name: name, item_highlights: highlights, rules_version: '20261102-local-benefits-2',
+    item_name: name, item_highlights: highlights, rules_version: '20261102-local-benefits-3',
     name_independent_keywords: phrases.slice(0, nameCount), highlights_independent_keywords: phrases.slice(0, highlightsCount),
     keywords: phrases, used: phrases, facts: [], required_variants: [], model: 'synthetic', attempts: 1,
     traffic_header: 'Traffic Share', search_header: 'Monthly Search Volume',
@@ -59,12 +59,12 @@ async function submitWithName(name, options = {}) {
   await query('#titleForm').handlers.submit({preventDefault() {}});
   assert.equal(requests, 2, 'One submission and one result read, without duplicate generation');
   assert.equal(query('#inputFields').disabled, false, 'Form must unlock after completion');
-  if (!expectedError && Array.from(name).length >= 68 && Array.from(name).length <= 75) {
+  if (!expectedError && Array.from(name).length >= 60 && Array.from(name).length <= 75) {
     assert.equal(query('#generatedResult').hidden, false);
     const history = JSON.parse(storage.get('title-workbench-history'));
     assert.equal(history[0].item_name, name);
     assert.equal(history.length, 2, 'Preserve existing history on successful generation');
-    assert.equal(query('#nameCount').textContent, `${Array.from(name).length} 字符（68–75）`);
+    assert.equal(query('#nameCount').textContent, `${Array.from(name).length} 字符（60–75）`);
     assert.ok(query('#coverageCount').textContent.includes(`本次至少 ${nameMinimum} 个`));
   } else {
     assert.equal(query('#generatedResult').hidden, true, 'Invalid name must not display as success');
@@ -75,7 +75,7 @@ async function submitWithName(name, options = {}) {
 }
 
 (async () => {
-  for (const size of [67, 68, 75, 76, 83]) await submitWithName('A'.repeat(size));
+  for (const size of [59, 60, 67, 68, 75, 76, 79, 83]) await submitWithName('A'.repeat(size));
   await submitWithName('A'.repeat(63) + ' B-C.');
   await submitWithName('A'.repeat(74) + '😀'); // Unicode code points agree with Python len, not UTF-16 units.
   for (const [availableName, availableHighlights] of [[1, 1], [2, 2], [5, 1], [1, 5], [3, 0], [5, 5]]) {

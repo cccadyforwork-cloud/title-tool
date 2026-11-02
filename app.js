@@ -16,9 +16,9 @@ const REVIEW_LABELS = {
   allocation_ok: '亮点补充具体场景、功能与使用帮助', priority_ok: '标题选词准确，亮点自然表达使用价值', no_redundancy: '无不必要的同义词堆砌'
 };
 const charLength = (text) => Array.from(text || '').length;
-const NAME_MIN = 68;
+const NAME_MIN = 60;
 const NAME_LIMIT = 75;
-const RULES_VERSION = '20261102-local-benefits-2';
+const RULES_VERSION = '20261102-local-benefits-3';
 let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;
@@ -301,7 +301,7 @@ function fieldLabel(locations) { return (locations || []).map(value => value ===
 function sourceLabel(row) { return (row.sources || []).map(source => source === 'traffic_share' ? '流量表' : '类目表').join('＋'); }
 function renderResult(result) {
   currentResult = result; el.name.textContent = result.item_name; el.highlights.textContent = result.item_highlights;
-  el.nameCount.textContent = `${charLength(result.item_name)} 字符（68–75）`;
+  el.nameCount.textContent = `${charLength(result.item_name)} 字符（60–75）`;
   el.highlightsCount.textContent = `${charLength(result.item_highlights)} 字符（最多125）`;
   const independent = new Set(result.name_independent_keywords.map(row => row.term.toLowerCase()));
   el.usedKeywords.replaceChildren();
@@ -328,7 +328,7 @@ function renderResult(result) {
   el.checkList.replaceChildren(
     textNode('p', `✓ 截图识别：流量占比${result.traffic_header ? `“${result.traffic_header}”` : '未识别'}；月搜索量${result.search_header ? `“${result.search_header}”` : '未识别'}；仅按已识别指标排序`),
     textNode('p', `✓ 标题：${keywordQuotaText(result, 'name')}；重要变体已在标题或亮点保留`),
-    textNode('p', `✓ 标题长度：${charLength(result.item_name)} 个字符，已通过前后端 68–75 字符校验（含空格和标点）；不自动截断；首次失败最多重新生成1次`),
+    textNode('p', `✓ 标题长度：${charLength(result.item_name)} 个字符，已通过前后端 60–75 字符校验（含空格和标点）；不自动截断；首次失败最多重新生成1次`),
     textNode('p', '亮点最多125字符，已按实际字数校验；不设长度下限，优先表达具体使用价值'),
     textNode('p', `亮点类目搜索词：${keywordQuotaText(result, 'highlights')}；仅辅助选词，不以数量判定质量`),
     textNode('p', '✓ 计数：不跨字段拼词，嵌套、单复数和连字符变体不重复计数'),

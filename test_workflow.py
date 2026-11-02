@@ -43,10 +43,10 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(urlopen.call_count, 2)
 
     def test_name_range_is_enforced_including_83_character_regression(self):
-        for size in (67, 68, 75, 76, 83):
+        for size in (59, 60, 67, 68, 75, 76, 79, 83):
             with self.subTest(size=size):
                 errors = server.local_checks("A" * size, "B" * 110, [])
-                if 68 <= size <= 75:
+                if 60 <= size <= 75:
                     self.assertEqual(errors, [])
                 else:
                     self.assertIn(f"Item Name 为 {size} 个字符", errors[0])
@@ -320,12 +320,12 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(result["review"]["mode"], "generation_self_check")
         self.assertEqual(result["local_validation"]["highlights_keyword_count"], 3)
         self.assertTrue(result["local_validation"]["name_length_passed"])
-        self.assertEqual(result["local_validation"]["length_policy"], "name_68_75_highlights_max125")
+        self.assertEqual(result["local_validation"]["length_policy"], "name_60_75_highlights_max125")
 
     @patch.object(server, "read_api_key", return_value="fake-key")
     @patch.object(server, "ask_ark")
     def test_outside_name_range_stops_after_one_failed_retry(self, ask, read_key):
-        for size in (64, 76, 83):
+        for size in (59, 76, 79, 83):
             with self.subTest(size=size):
                 ask.reset_mock()
                 candidate = {**CANDIDATE, "item_name": "A" * size, "self_check": APPROVED}

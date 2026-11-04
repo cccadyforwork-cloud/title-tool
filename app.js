@@ -29,7 +29,7 @@ function quantityLeads(name, quantity) {
 }
 const NAME_MIN = 60;
 const NAME_LIMIT = 75;
-const RULES_VERSION = '20261105-organic-traffic-1';
+const RULES_VERSION = '20261105-core-identity-1';
 let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;
@@ -351,7 +351,7 @@ function renderResult(result) {
     textNode('p', `✓ 截图识别：流量占比${result.traffic_header ? `“${result.traffic_header}”` : '未识别'}；月搜索量${result.search_header ? `“${result.search_header}”` : '未识别'}；流量仅计自然贡献，混合行按总占比×自然比例折算，纯广告及未知自然比例不参与流量排序`),
     textNode('p', `✓ 标题：${keywordQuotaText(result, 'name')}；重要变体已在标题或亮点保留`),
     textNode('p', `✓ 标题长度：${charLength(result.item_name)} 个字符，已通过前后端 60–75 字符校验（含空格和标点）；逐组实测选择完整候选，不自动截断；全失败最多重新生成1次`),
-    ...(result.title_pair_preflight ? [textNode('p', `✓ 生成前组合：数量与实际商品名称已预留，选定双关键词最短骨架 ${result.title_pair_preflight.shortest_skeleton_chars} 字符；第二词仅因75字符预算不可行时顺延`)] : []),
+    ...(result.title_pair_preflight ? [textNode('p', `✓ 生成前组合：数量与核心品名“${result.title_pair_preflight.product_identity}”已预留，功能等描述另作写作素材；选定双关键词最短骨架 ${result.title_pair_preflight.shortest_skeleton_chars} 字符；第二词仅因75字符预算不可行时顺延`)] : []),
     textNode('p', result.title_traffic_priority?.minimum_primary_keywords === 1 ? `主要流量词：${(result.primary_traffic_keywords || []).join('、')}；先筛适用词，再按自然流量贡献占比从高到低选择` : '选词来源：无适用流量词，按类目月搜索量从高到低选择；不要求主要流量词'),
     textNode('p', '亮点最多125字符，已按实际字数校验；不设长度下限，优先表达具体使用价值'),
     textNode('p', `亮点类目搜索词：${keywordQuotaText(result, 'highlights')}；优先作为表达依据；变序和单复数可能未计入完整匹配，不以数量判定质量`),

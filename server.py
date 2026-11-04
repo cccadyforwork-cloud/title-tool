@@ -33,7 +33,7 @@ HIGHLIGHTS_MIN = 1
 MIN_NAME_KEYWORDS = 2
 TARGET_NAME_KEYWORDS = 3
 MIN_HIGHLIGHTS_KEYWORDS = 0
-RULES_VERSION = "20261105-organic-traffic-1"
+RULES_VERSION = "20261105-core-identity-1"
 GENERATION_JOB_ROOT = None
 GENERATION_JOBS = {}
 GENERATION_JOBS_LOCK = threading.Lock()
@@ -506,9 +506,19 @@ def plan_product(original, reference, keywords, api_key):
         "A null traffic is unknown, not zero. Category words can supply "
         "supported synonyms even without a traffic percentage. Reject misspellings and ungrammatical "
         "query forms as verbatim listing phrases; do not count them just to reach a quota.\n"
-        "Extract a short base product_name; do not mechanically copy everything before the first comma. "
-        "Include the original's explicit brand in this compact name so its characters are reserved "
-        "in the title preflight. Never invent a brand or borrow a reference brand. "
+        "Separate core_product_name from descriptive facts. core_product_name answers only WHAT is sold, "
+        "retaining identity-defining type/mechanism (Suction Cup Hooks, not just Hooks; Wrapping Paper Cutter, "
+        "not Wrapping Paper). Exclude selling quantity, repeated synonyms, optional features, material, finish, "
+        "color, size, audience, location and use clauses from core_product_name. "
+        "For '2 Pack Suction Cup Hooks, Shower Hooks for Inside Shower, Rotating Wood Grain Plastic Towel "
+        "Holders for Bathroom Door, Tile', use core_product_name='Suction Cup Hooks'; record rotating, "
+        "wood grain, plastic, bathroom door and tile separately in facts/highlight_context. "
+        "For 'Pill Cutter with Removable Silicone Pad and Built-in Storage', core is 'Pill Cutter', "
+        "while removable pad and built-in storage remain descriptive facts. These are examples, not product defaults. "
+        "Return brand_from_original separately as an exact original substring or empty string; never invent "
+        "or borrow a reference brand. product_name is the brand plus core identity only, not a feature list. "
+        "Only this identity and quantity consume mandatory skeleton budget; all supported descriptions remain "
+        "available to writing, especially Highlights, and important variants are still preserved across both fields. "
         "Record useful facts from BOTH original and user-confirmed reference titles with exact source_quote "
         "substrings and source 'original' or 'reference'. Keep their supplied meanings, without applicability review. "
         "Preserve meaningful feature qualifiers in the claims: removable is not interchangeable with a "
@@ -551,7 +561,7 @@ def plan_product(original, reference, keywords, api_key):
         "Accept ordinary category synonyms (tablet cutter vs pill cutter). Reject other languages, other products "
         "or unusable misspellings. Do not reassess whether user-confirmed reference features apply. "
         "Do not select only the top 3; assess all rows. Preserve exact input term spelling.\n"
-        "Return JSON only: {\"product_name\":\"Pill Cutter\",\"highlight_focus\":\"compact feature-and-benefit clause\","
+        "Return JSON only: {\"core_product_name\":\"Pill Cutter\",\"brand_from_original\":\"\",\"product_name\":\"Pill Cutter\",\"highlight_focus\":\"compact feature-and-benefit clause\","
         "\"highlight_context\":{\"product\":\"Pill Cutter\",\"audience\":\"\",\"scene\":\"\","
         "\"function\":\"\",\"benefit\":\"\",\"conditions\":\"\"},"
         "\"facts\":[{\"claim\":\"Includes mini storage case\",\"source_quote\":\"Mini Storage Case\",\"source\":\"original\"}],"
@@ -560,8 +570,12 @@ def plan_product(original, reference, keywords, api_key):
         + json.dumps({"original": original, "references": reference, "keywords": keywords}, ensure_ascii=False)
     )
     answer = ask_ark([{"type": "input_text", "text": prompt}], api_key)
-    if not isinstance(answer, dict) or not clean_text(answer.get("product_name")):
-        raise ValueError("商品事实整理结果不完整，请重试")
+    if not isinstance(answer, dict) or not clean_text(answer.get("core_product_name")):
+        raise ValueError("商品核心品名整理不完整，请重试")
+    core = clean_text(answer["core_product_name"])
+    brand = clean_text(answer.get("brand_from_original"))
+    if brand and not contains_phrase(original, brand):
+        raise ValueError("商品品牌缺少原标题依据，请重试")
     facts, variants = [], []
     for field, target, key in (("facts", facts, "claim"), ("required_variants", variants, "value")):
         rows = answer.get(field, [])
@@ -603,7 +617,8 @@ def plan_product(original, reference, keywords, api_key):
         raise ValueError("截图中没有可用于这款商品的自然英文词组，请检查语言或截图")
     context = answer.get("highlight_context")
     context = context if isinstance(context, dict) else {}
-    return {"product_name": clean_text(answer["product_name"]), "facts": facts,
+    return {"product_name": product_identity({"core_product_name": core, "brand_from_original": brand}),
+            "core_product_name": core, "brand_from_original": brand, "facts": facts,
             "highlight_context": {key: clean_text(context.get(key))[:240]
                                   for key in ("product", "audience", "scene", "function", "benefit", "conditions")},
             "highlight_focus": clean_text(answer.get("highlight_focus")),
@@ -764,10 +779,17 @@ def _join_title_fragments(left, right, separator):
     return left + separator + right
 
 
+def product_identity(plan):
+    """Core identity and original brand only; descriptive facts are not mandatory title fragments."""
+    core = clean_text(plan.get("core_product_name")) or clean_text(plan.get("product_name"))
+    brand = clean_text(plan.get("brand_from_original"))
+    return (brand + " " + core) if brand and not contains_phrase(core, brand) else core
+
+
 def title_pair_preflight(original, plan, traffic_priority):
     """Reserve quantity and identity before writing; select the best fitting full pair."""
     quantity = selling_quantity(original)
-    identity = clean_text(plan.get("product_name")) or clean_text(original.split(",", 1)[0])
+    identity = product_identity(plan) or clean_text(original.split(",", 1)[0])
     if quantity and quantity_leads(identity, quantity):
         identity = identity[len(quantity):].strip(" ,;:")
     if not identity:
@@ -808,7 +830,7 @@ def title_pair_preflight(original, plan, traffic_priority):
     if not feasible:
         shortest = min((row["characters"] for row in checked), default=None)
         detail = f"当前骨架最短 {shortest} 字符" if shortest is not None else "没有独立的完整词组组合"
-        raise ValueError(f"生成前组合检查未通过：保留最高适用流量词、数量和实际商品名称后，75字符内无可用双关键词骨架（{detail}）。请补充更短的相关关键词或确认更简洁的商品名称；不会降低两词门槛或反复生成")
+        raise ValueError(f"生成前组合检查未通过：保留最高适用流量词、数量和实际商品名称后，75字符内无可用双关键词骨架（{detail}；按核心品名「{identity}」预留）。请补充更短的相关关键词或确认更简洁的商品名称；不会降低两词门槛或反复生成")
     best_priority = min(priority for priority, _ in feasible)
     selected = sorted([entry for priority, entry in feasible if priority == best_priority],
                       key=lambda row: (row["characters"], row["skeleton"].casefold()))[:8]
@@ -845,7 +867,7 @@ def generation_prompt(original, reference, plan, requirements, preflight=None):
 标题总关键词至少覆盖2个（可用不足2个时补充资料，不凑词）。先按原标题与人工确认参考筛选适用词，排除不相关促销、清仓、Prime优惠和平台导航词。title_traffic_priority.ranked_traffic_phrases只包含适用流量词，严格按占比从高到低选择；最高占比词适用就优先用它，不可因为较低词更短或有截图主要标记而跳过。required_top_phrases非空时必须完整覆盖其中至少一个最高适用占比词，并列任选；不因字数紧张免除要求。最高占比主词仅在不适用时顺延；第二词额外允许按下方生成前组合检查，在75字符预算确实不可行时顺延。截图主要标记保留作来源说明，不覆盖适用性与占比顺序。材料或用途词可以通过for/with自然使用，但实际商品身份必须清楚。
 traffic字段只表示自然流量贡献占比；混合行由程序按整行占比×自然比例折算，禁止用整行占比、广告比例或自然比例单独排序。纯广告或自然比例未知的行不作为流量依据。
 流量图没有任何适用词（包括只有无关促销词，或只提供可读类目搜索词）时，required_top_phrases为空，不要求主要流量词，不硬塞原始最高占比词；按类目月搜索量从高到低选择适用关键词生成标题。存在可用流量词时流量优先，类目词用于补足关键词；月搜索量绝不冒充流量占比。受75字符、实际商品身份和数量前置限制时，先减少功能、场景、颜色等可放亮点的信息，不为第3个词挤掉适用最高占比词。
-生成前程序已按数量、实际商品短名称及完整双关键词计算title_pair_preflight。必须完整覆盖selected_pairs中至少一组的两个词组；最高适用流量词仍必保留。第二词按优先顺序选择，只有更高优先第二词无法形成75字符内骨架时才顺延；不能自行改选更短但已被可行高优先组合替代的低流量词。
+生成前程序只按数量、核心品名及原标题品牌、完整双关键词计算title_pair_preflight。core_product_name表达实际所售商品的核心类型，不包含额外材质、功能、外观、场景与同义名称；这些描述保留在facts、highlight_context及完整资料中，可按剩余预算用于标题或优先交亮点，不作为必须整段塞进标题的身份。重要变体仍须在两个字段至少保留一次。必须完整覆盖selected_pairs中至少一组的两个词组；最高适用流量词仍必保留。第二词按优先顺序选择，只有更高优先第二词无法形成75字符内骨架时才顺延；不能自行改选更短但已被可行高优先组合替代的低流量词。
 name_budgets只包含已选组合骨架，每组提供真实characters、maximum_extra_characters和minimum_extra_characters。骨架不是发布文案，先把它组织为自然英文，再仅在剩余字符预算内加入有依据的修饰。若骨架已在60–75字符且表达自然，可以直接采用，无需扩写。功能、场景、颜色等优先放亮点；不能因为追求第三词或扩写导致超过75字符。完整词组匹配，嵌套/单复数/连字符不重复计数；不得截断关键词、改写数量或舍弃实际商品身份。
 亮点写作顺序：先从highlight_materials.category_search_phrases按月搜索量和适用性选择核心表达，目标自然使用1–2个相关类目词；再优先借鉴竞品参考中的具体功能、结构、用途短语，保留有意义的原词及限定词，最后用下列四点组织自然句子。不能直接忽略类目词和参考表达后自行泛写。
 亮点回答消费者最相关的问题：这是什么/适合谁，用于哪些具体场景和用途，具体功能如何帮助完成任务或解决问题，已知哪些适用条件或限制。
@@ -1002,7 +1024,8 @@ def generate(payload):
             "title_traffic_priority": traffic_priority,
             "title_pair_preflight": preflight,
             "product_sources": {"original": original, "reference": reference},
-            "product_name": plan["product_name"], "traffic_header": header, "search_header": search_header,
+            "product_name": plan["product_name"], "core_product_name": plan.get("core_product_name", ""),
+            "brand_from_original": plan.get("brand_from_original", ""), "traffic_header": header, "search_header": search_header,
             "local_validation": {"passed": True, "name_chars": len(name), "highlights_chars": len(highlights),
                                  "name_min": NAME_MIN, "highlights_min": HIGHLIGHTS_MIN,
                                  "name_limit": NAME_LIMIT, "highlights_limit": HIGHLIGHTS_LIMIT,

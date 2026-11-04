@@ -11,7 +11,7 @@ import server
 ORIGINAL = "Pill Cutter, Pill Splitter for Small, Tiny and Large Pills, Half Quarter Tablet Cutter with Mini Storage Case, Clear"
 KEYWORDS = [{"term": "pill cutter", "traffic": 89.66}, {"term": "pill splitter for small pills", "traffic": 1.35}]
 SEARCH = [{"term": "pill splitter", "search_volume": 118107}, {"term": "pill cutter", "search_volume": 373700}, {"term": "tablet cutter", "search_volume": 4565}]
-PLAN = {"product_name": "Pill Cutter", "facts": [{"claim": "Mini storage case", "source_quote": "Mini Storage Case"}],
+PLAN = {"product_name": "Pill Cutter", "core_product_name": "Pill Cutter", "brand_from_original": "", "facts": [{"claim": "Mini storage case", "source_quote": "Mini Storage Case"}],
         "required_variants": [{"value": "Clear", "source_quote": "Clear"}],
         "keyword_decisions": [{**row, "eligible": True, "reason": "品类与原标题一致"} for row in server.merge_keywords(KEYWORDS, SEARCH)]}
 CANDIDATE = {"item_name": "Clear Pill Cutter, Pill Splitter for Small Pills, Tablet Cutter with Case",
@@ -137,6 +137,52 @@ class WorkflowTests(unittest.TestCase):
         prompt = ask.call_args.args[0][0]["text"]
         self.assertIn("no multiplication or renormalization", prompt)
         self.assertIn("organic rank", prompt)
+
+    @patch.object(server, "ask_ark")
+    def test_hook_core_identity_excludes_descriptions_without_losing_facts(self, ask):
+        original = "2 Pack Suction Cup Hooks, Shower Hooks for Inside Shower, Rotating Wood Grain Plastic Towel Holders for Bathroom Door, Tile"
+        rows = [{"term": "suction cup hooks", "traffic": 8.950025}, {"term": "shower hooks", "traffic": 7.723482}]
+        descriptive_name = "Rotating Wood Grain Plastic Suction Cup Hooks for Bathroom Door and Tile"
+        ask.return_value = {"product_name": descriptive_name, "core_product_name": "Suction Cup Hooks", "brand_from_original": "",
+            "facts": [{"claim": "Rotating Wood Grain Plastic", "source_quote": "Rotating Wood Grain Plastic"}],
+            "keyword_decisions": [{"term": r["term"], "eligible": True, "reason": "适用"} for r in rows]}
+        plan = server.plan_product(original, "", rows, "mock")
+        self.assertEqual(plan["core_product_name"], "Suction Cup Hooks")
+        self.assertEqual(plan["product_name"], "Suction Cup Hooks")
+        self.assertEqual(plan["facts"][0]["claim"], "Rotating Wood Grain Plastic")
+        priority = server.title_traffic_priority(plan["keywords"])
+        result = server.title_pair_preflight(original, plan, priority)
+        self.assertEqual(result["shortest_skeleton_chars"], 37)
+        self.assertEqual(result["quantity_prefix"], "2 Pack")
+        self.assertEqual(set(result["selected_pairs"][0]["phrases"]), {"suction cup hooks", "shower hooks"})
+        prompt = server.generation_prompt(original, "", plan, server.keyword_requirements(plan["keywords"]), result)
+        self.assertIn("Rotating Wood Grain Plastic", prompt)
+        self.assertIn("core_product_name", prompt)
+        legacy = {**plan, "core_product_name": "", "product_name": descriptive_name}
+        with self.assertRaisesRegex(ValueError, "75字符内无可用"):
+            server.title_pair_preflight(original, legacy, priority)
+        name = "2 Pack Suction Cup Hooks, Shower Hooks for Inside Shower, Wood Grain"
+        self.assertEqual(len(name), 68)
+        self.assertEqual(server.local_checks(name, "Rotating plastic hooks for bathroom door and tile", []), [])
+
+    def test_original_brand_still_consumes_core_identity_budget(self):
+        rows = [{"term": "suction cup hooks", "traffic": 9, "eligible": True},
+                {"term": "shower hooks", "traffic": 7, "eligible": True}]
+        plan = {"product_name": "Acme Rotating Plastic Hooks", "core_product_name": "Suction Cup Hooks", "brand_from_original": "Acme", "keywords": rows}
+        result = server.title_pair_preflight("2 Pack Acme Suction Cup Hooks", plan, server.title_traffic_priority(rows))
+        self.assertEqual(result["product_identity"], "Acme Suction Cup Hooks")
+        self.assertTrue(result["selected_pairs"][0]["skeleton"].startswith("2 Pack Acme Suction Cup Hooks"))
+        plan["core_product_name"] = "Acme Suction Cup Hooks"
+        self.assertEqual(server.product_identity(plan), "Acme Suction Cup Hooks")
+
+    @patch.object(server, "ask_ark")
+    def test_planner_requires_explicit_core_and_original_brand_evidence(self, ask):
+        ask.return_value = {"product_name": "Very long descriptive name"}
+        with self.assertRaisesRegex(ValueError, "核心品名"):
+            server.plan_product(ORIGINAL, "", KEYWORDS, "mock")
+        ask.return_value = {**PLAN, "brand_from_original": "CompetitorBrand"}
+        with self.assertRaisesRegex(ValueError, "品牌缺少原标题依据"):
+            server.plan_product(ORIGINAL, "CompetitorBrand Pill Cutter", KEYWORDS, "mock")
 
     def test_monthly_search_is_separate_from_traffic(self):
         rows = server.merge_keywords(KEYWORDS, SEARCH)

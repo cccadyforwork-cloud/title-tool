@@ -62,9 +62,10 @@ async function submitWithName(name, options = {}) {
   assert.equal(query('#inputFields').disabled, false, 'Form must unlock after completion');
   if (!expectedError && Array.from(name).length >= 60 && Array.from(name).length <= 75) {
     assert.equal(query('#generatedResult').hidden, false);
-    const history = JSON.parse(storage.get('title-workbench-history'));
+    const history = JSON.parse(storage.get('title-workbench-history:v2:["standalone"]'));
     assert.equal(history[0].item_name, name);
-    assert.equal(history.length, 2, 'Preserve existing history on successful generation');
+    assert.equal(history.length, 1, 'Save new records in the scoped history');
+    assert.equal(storage.get('title-workbench-history'), oldHistory, 'Preserve the unassigned legacy archive');
     assert.equal(query('#nameCount').textContent, `${Array.from(name).length} 字符（60–75）`);
     assert.ok(query('#coverageCount').textContent.includes(`本次至少 ${nameMinimum} 个`));
   } else {

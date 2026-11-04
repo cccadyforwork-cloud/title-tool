@@ -40,6 +40,11 @@ const draftSku = draftParams.get('store_sku');
 const draftScope = draftCase && draftSku ? JSON.stringify([draftCase, draftSku]) : 'standalone';
 const draftTextKey = `title-workbench-draft-text:${draftScope}`;
 const draftImageKey = kind => `${draftScope}:${kind}`;
+const historyProject = draftParams.get('store_project_id');
+const historyContext = draftSku ? [draftCase ? 'case' : historyProject ? 'project' : 'sku', draftCase || historyProject || '', draftSku] : ['standalone'];
+const historyKey = `title-workbench-history:v2:${JSON.stringify(historyContext)}`;
+const legacyHistoryKey = 'title-workbench-history';
+
 const imageTouched = {traffic: false, search: false};
 let draftDbPromise;
 let draftImageRestore;
@@ -376,18 +381,23 @@ function renderResult(result) {
   });
   el.emptyResult.hidden = true; el.generatedResult.hidden = false; el.resultStatus.textContent = '已生成';
 }
-function getHistory() {
-  try { const value = JSON.parse(localStorage.getItem('title-workbench-history') || '[]'); return Array.isArray(value) ? value.filter(row => row && typeof row === 'object').slice(0, 10) : []; }
-  catch { return []; }
+function readHistory(key) {
+  const value = JSON.parse(localStorage.getItem(key) || '[]');
+  if (!Array.isArray(value)) throw new Error('历史记录格式无效');
+  return value.filter(row => row && typeof row === 'object').slice(0, 10);
+}
+function getHistory(key = historyKey) {
+  try { return readHistory(key); } catch { return []; }
 }
 function saveHistory(item) {
-  const history = getHistory().filter(row => row.item_name !== item.item_name || row.item_highlights !== item.item_highlights);
-  history.unshift(item);
-  try { localStorage.setItem('title-workbench-history', JSON.stringify(history.slice(0, 10))); renderHistory(); return true; }
-  catch { showToast('结果已生成，但浏览器存储不可用；请先复制结果'); return false; }
+  try {
+    const history = readHistory(historyKey).filter(row => row.item_name !== item.item_name || row.item_highlights !== item.item_highlights);
+    history.unshift({...item, store_case_id: draftCase || '', store_project_id: historyProject || '', store_sku: draftSku || ''});
+    localStorage.setItem(historyKey, JSON.stringify(history.slice(0, 10))); renderHistory(); return true;
+  } catch { showToast('结果已生成，但历史记录未能保存；请先复制结果'); return false; }
 }
 function deleteHistory(id) {
-  try { localStorage.setItem('title-workbench-history', JSON.stringify(getHistory().filter(item => (item.id ?? item.time) !== id))); renderHistory(); showToast('记录已删除'); }
+  try { localStorage.setItem(historyKey, JSON.stringify(readHistory(historyKey).filter(item => (item.id ?? item.time) !== id))); renderHistory(); showToast('记录已删除'); }
   catch { showToast('浏览器存储不可用，未能删除记录'); }
 }
 async function copyText(text) {
@@ -404,7 +414,16 @@ function copyAction(label, value, message) {
   button.addEventListener('click', async () => { try { await copyText(value); showToast(message); } catch (error) { showToast(error.message); } }); return button;
 }
 function renderHistory() {
-  const history = getHistory(); el.historyEmpty.hidden = history.length > 0; el.historyList.hidden = history.length === 0; el.historyList.replaceChildren();
+  const history = getHistory(); el.historyEmpty.hidden = history.length > 0; el.historyList.hidden = history.length === 0;
+  $('#historyScope').textContent = draftSku ? `当前SKU：${draftSku} · 每个链接SKU分别保留最近10条（此浏览器）` : '未关联SKU · 当前独立工具保留最近10条（此浏览器）';
+  $('#clearHistory').textContent = draftSku ? '清空当前SKU记录' : '清空当前记录';
+  renderHistoryItems(history, el.historyList);
+  const previous = getHistory(legacyHistoryKey);
+  $('#legacyHistory').hidden = previous.length === 0;
+  renderHistoryItems(previous, $('#legacyHistoryList'), true);
+}
+function renderHistoryItems(history, target, archive = false) {
+  target.replaceChildren();
   history.forEach((item, index) => {
     const legacy = !item.item_name; const name = legacy ? item.title || '' : item.item_name;
     const row = document.createElement('article'); row.className = 'history-item';
@@ -416,8 +435,8 @@ function renderHistory() {
     actions.append(copyAction(legacy ? '复制旧标题' : '复制标题', name, '标题已复制'));
     if (!legacy) actions.append(copyAction('复制亮点', item.item_highlights, '商品亮点已复制'), copyAction('复制全部', pairText(item), '两个字段已复制'));
     const remove = textNode('button', '×', 'history-delete'); remove.type = 'button'; remove.setAttribute('aria-label', '删除这条记录');
-    remove.addEventListener('click', () => deleteHistory(item.id ?? item.time)); actions.append(remove);
-    row.append(textNode('span', String(index + 1).padStart(2, '0'), 'history-index'), content, actions); el.historyList.append(row);
+    remove.addEventListener('click', () => deleteHistory(item.id ?? item.time)); if (!archive) actions.append(remove);
+    row.append(textNode('span', String(index + 1).padStart(2, '0'), 'history-index'), content, actions); target.append(row);
   });
 }
 function setTheme(theme) {
@@ -468,7 +487,7 @@ $('#clearButton').addEventListener('click', () => {
   try { localStorage.removeItem(draftTextKey); draftTextError = false; } catch { draftTextError = true; }
   removeImage(); removeImage('search'); clearResult(); updateDraftStatus();
 });
-$('#clearHistory').addEventListener('click', () => { try { localStorage.removeItem('title-workbench-history'); renderHistory(); showToast('生成记录已清空'); } catch { showToast('浏览器存储不可用，未能清空记录'); } });
+$('#clearHistory').addEventListener('click', () => { try { localStorage.removeItem(historyKey); renderHistory(); showToast('当前记录已清空'); } catch { showToast('浏览器存储不可用，未能清空记录'); } });
 el.themeButton.addEventListener('click', () => setTheme(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 restoreDraftText();
 draftImageRestore = restoreDraftImages();
@@ -477,3 +496,5 @@ draftImageRestore.finally(() => {
   const pending = readPendingGeneration();
   if (pending && !busy) void displayGeneration(() => generateWithArk(null, null, '', '', pending));
 });
+
+window.addEventListener?.('storage', event => { if (event.key === historyKey || event.key === legacyHistoryKey || event.key === null) renderHistory(); });

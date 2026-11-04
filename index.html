@@ -87,14 +87,19 @@
 
     <section class="panel history-panel">
       <div class="panel-title history-head">
-        <div><h2>生成记录</h2><p>自动保留最近 10 条，可直接再次复制</p></div>
+        <div><h2>生成记录</h2><p id="historyScope">每个链接SKU分别保留最近10条（此浏览器），可再次复制</p></div>
         <button id="clearHistory" class="ghost-button" type="button">清空记录</button>
       </div>
       <div class="history-empty" id="historyEmpty">暂无生成记录</div>
       <div class="history-list" id="historyList" hidden></div>
+      <details id="legacyHistory" hidden>
+        <summary>旧版未归属SKU记录</summary>
+        <p>旧记录未保存SKU标识，单独保留供复制，不计入当前SKU的10条额度。</p>
+        <div class="history-list" id="legacyHistoryList"></div>
+      </details>
     </section>
   </main>
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
-  <script src="./app.js?v=20261105-core-identity-1"></script>
+  <script src="./app.js?v=20261105-sku-history-1"></script>
 </body>
 </html>

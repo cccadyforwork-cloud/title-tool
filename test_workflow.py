@@ -150,16 +150,16 @@ class WorkflowTests(unittest.TestCase):
         self.assertTrue(any("必须原样放在商品标题最前面" in error for error in errors))
         self.assertFalse(server.quantity_leads("10 Packets Cutter", "10 Pack"))
 
-    def test_title_prioritizes_highest_known_traffic_before_search_only_synonyms(self):
+    def test_title_prioritizes_highest_applicable_traffic(self):
         rows = [{"term": "pill cutter", "eligible": True, "traffic": 3.63, "search_volume": 100},
                 {"term": "pill splitter", "eligible": True, "traffic": None, "search_volume": 90000},
                 {"term": "tablet cutter", "eligible": True, "traffic": 2, "search_volume": 50},
-                {"term": "wrong product", "eligible": False, "traffic": 50, "search_volume": 10}]
+                {"term": "wrong product", "eligible": False, "traffic": 50, "search_volume": 10, "primary_traffic": True}]
         policy = server.title_traffic_priority(rows)
-        self.assertEqual(policy["required_top_phrases"], ["wrong product"])
-        self.assertEqual([row["term"] for row in policy["ranked_traffic_phrases"]], ["wrong product", "pill cutter", "tablet cutter"])
+        self.assertEqual(policy["required_top_phrases"], ["pill cutter"])
+        self.assertEqual([row["term"] for row in policy["ranked_traffic_phrases"]], ["pill cutter", "tablet cutter"])
         candidate = {**CANDIDATE, "item_name": CANDIDATE["item_name"].replace("Pill Cutter", "Pill Holder")}
-        with self.assertRaisesRegex(ValueError, "主要流量词.*wrong product"):
+        with self.assertRaisesRegex(ValueError, "最高占比.*pill cutter"):
             self.generate_with_pool(rows, candidate)
         self.assertEqual(server.title_traffic_priority([{**rows[0], "traffic": None}])["required_top_phrases"], [])
         self.assertEqual(server.title_traffic_priority([{**rows[0], "term": "A" * 75}], "1PC")["required_top_phrases"], ["A" * 75])
@@ -176,15 +176,49 @@ class WorkflowTests(unittest.TestCase):
         merged = server.merge_keywords(rows, [{"term": "wrapping paper cutter", "search_volume": 65599}])
         for row in merged: row["eligible"] = True
         policy = server.title_traffic_priority(merged)
-        self.assertEqual(policy["primary_source"], "screenshot_label")
-        self.assertEqual(policy["required_top_phrases"], ["christmas wrapping paper", "wrapping paper"])
+        self.assertEqual(policy["primary_source"], "highest_relevant_traffic")
+        self.assertEqual(policy["required_top_phrases"], ["christmas wrapping paper"])
         self.assertEqual(policy["minimum_primary_keywords"], 1)
         no_labels = [{"term": "christmas wrapping paper", "traffic": 14.49, "eligible": False},
                      {"term": "wrapping paper cutter", "traffic": 3.63, "eligible": True}]
-        self.assertEqual(server.title_traffic_priority(no_labels)["required_top_phrases"], ["christmas wrapping paper"])
-        self.assertEqual(server.title_traffic_priority(no_labels)["primary_source"], "highest_traffic")
+        self.assertEqual(server.title_traffic_priority(no_labels)["required_top_phrases"], ["wrapping paper cutter"])
+        self.assertEqual(server.title_traffic_priority(no_labels)["primary_source"], "highest_relevant_traffic")
         marked_low = [{**no_labels[0], "primary_traffic": False}, {**no_labels[1], "primary_traffic": True}]
         self.assertEqual(server.title_traffic_priority(marked_low)["required_top_phrases"], ["wrapping paper cutter"])
+
+    def test_lower_primary_marker_does_not_override_higher_applicable_share(self):
+        rows = [{"term": "broom covers", "eligible": True, "traffic": 8},
+                {"term": "broom dust covers", "eligible": True, "traffic": 2, "primary_traffic": True}]
+        self.assertEqual(server.title_traffic_priority(rows)["required_top_phrases"], ["broom covers"])
+        tied = [*rows, {"term": "disposable broom covers", "eligible": True, "traffic": 8}]
+        self.assertEqual(server.title_traffic_priority(tied)["required_top_phrases"], ["broom covers", "disposable broom covers"])
+
+    def test_broom_promotions_fall_back_to_category_without_real_api(self):
+        original = "100 Pcs Disposable Broom Hair Cover, Nonwoven Broom Sleeve with Elastic Opening, Household Accessory for Floor Hair and Debris Cleanup"
+        rows = [{"term": "lightning deals of today prime", "traffic": 7.44, "search_volume": None, "eligible": False, "primary_traffic": True},
+                {"term": "clearance", "traffic": 3.24, "search_volume": None, "eligible": False},
+                {"term": "broom covers", "traffic": None, "search_volume": 669, "eligible": True},
+                {"term": "disposable broom covers", "traffic": None, "search_volume": 668, "eligible": True},
+                {"term": "broom dust covers", "traffic": None, "search_volume": 1761, "eligible": True}]
+        plan = {"product_name": "Disposable Broom Cover", "facts": [], "required_variants": [], "keywords": rows}
+        candidate = {"item_name": "100 Pcs Disposable Broom Covers, Broom Dust Covers for Floor Cleanup",
+                     "item_highlights": "Nonwoven sleeves with elastic openings for floor hair and debris cleanup.", "self_check": APPROVED}
+        with patch.object(server, "read_api_key", return_value="mock"), patch.object(server, "extract_keywords", return_value=(rows[:2], "Click Share")), \
+                patch.object(server, "extract_search_keywords", return_value=(rows[2:], "M. Searches")), \
+                patch.object(server, "plan_product", return_value=plan), patch.object(server, "ask_ark", return_value={"candidates": [candidate] * 3}) as ask:
+            result = server.generate({"image": IMAGE, "search_image": IMAGE, "original": original})
+        self.assertEqual(ask.call_count, 1)
+        self.assertEqual(result["title_traffic_priority"]["minimum_primary_keywords"], 0)
+        self.assertEqual(result["title_traffic_priority"]["primary_source"], "category_search")
+        self.assertEqual(result["primary_traffic_keywords"], [])
+        self.assertEqual(result["local_validation"]["name_keyword_count"], 2)
+
+    def test_category_only_candidates_prefer_higher_search_volume(self):
+        rows = [{"term": "broom covers", "traffic": None, "search_volume": 669, "eligible": True},
+                {"term": "broom dust covers", "traffic": None, "search_volume": 1761, "eligible": True}]
+        high = {"name": "Broom Dust Covers", "name_groups": [rows[1]], "highlight_groups": []}
+        low = {"name": "Broom Covers", "name_groups": [rows[0]], "highlight_groups": []}
+        self.assertGreater(server.candidate_priority(high, rows, 3), server.candidate_priority(low, rows, 3))
 
     def test_highlight_materials_rank_category_terms_and_keep_reference_quotes(self):
         plan = {"keywords": [

@@ -19,7 +19,7 @@ async function submitWithName(name, options = {}) {
   const {availableName = 3, availableHighlights = 3,
     nameCount = Math.min(3, availableName), highlightsCount = Math.min(3, availableHighlights),
     nameMinimum = 2, highlightsMinimum = 0,
-    expectedError = null, original = 'Synthetic original', highlights = "B".repeat(60)} = options;
+    expectedError = null, original = 'Synthetic original', highlights = "B".repeat(60), requiredPairs = []} = options;
   const nodes = new Map();
   const query = selector => {
     if (!nodes.has(selector)) nodes.set(selector, node());
@@ -30,7 +30,8 @@ async function submitWithName(name, options = {}) {
   let requests = 0;
   const phrases = ['pill cutter', 'pill splitter', 'tablet cutter', 'medicine cutter', 'tablet splitter'].map(term => ({term, locations: []}));
   const answer = {
-    item_name: name, item_highlights: highlights, rules_version: '20261102-benefits-6',
+    item_name: name, item_highlights: highlights, rules_version: '20261104-feasible-pairs-1',
+    title_traffic_priority: {minimum_primary_keywords: 0, required_keyword_pairs: requiredPairs},
     name_independent_keywords: phrases.slice(0, nameCount), highlights_independent_keywords: phrases.slice(0, highlightsCount),
     keywords: phrases, used: phrases, facts: [], required_variants: [], model: 'synthetic', attempts: 1,
     traffic_header: 'Traffic Share', search_header: 'Monthly Search Volume',
@@ -88,5 +89,7 @@ async function submitWithName(name, options = {}) {
   await submitWithName('A'.repeat(70), {highlights: 'B'.repeat(126), expectedError: /超过125字符/});
   await submitWithName('1PC ' + 'A'.repeat(66), {original:'1PC Cutter, Black'});
   await submitWithName('A'.repeat(66) + ' 1PC', {original:'1PC Cutter, Black', expectedError:/数量必须原样放在商品标题最前面/});
+  await submitWithName('A'.repeat(70), {requiredPairs: [['pill cutter', 'pill splitter']], expectedError: /可行双关键词/});
+  await submitWithName('Clear Pill Cutter, Pill Splitter for Small Pills, Tablet Cutter with Case', {requiredPairs: [['pill cutter', 'pill splitter for small pills']]});
   console.log('Title frontend length, natural coverage, polling and history checks passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

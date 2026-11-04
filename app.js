@@ -16,6 +16,10 @@ const REVIEW_LABELS = {
   allocation_ok: '亮点补充具体场景、功能与使用帮助', priority_ok: '数量前置，亮点优先采用相关类目词及参考表达', no_redundancy: '无不必要的同义词堆砌'
 };
 const charLength = (text) => Array.from(text || '').length;
+function titleHasPhrase(text, phrase) {
+  const escaped = phrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(?<!\\w)${escaped}(?!\\w)`, 'i').test(text);
+}
 function sellingQuantity(original) {
   return original.match(/(?<![\w.])(?:[1-9]\d*\s*-?\s*(?:packs?|pcs?|pieces?|counts?|ct|pairs?|sets?)|(?:packs?|sets?)\s+of\s+[1-9]\d*)(?![\w.])/i)?.[0] || '';
 }
@@ -25,7 +29,7 @@ function quantityLeads(name, quantity) {
 }
 const NAME_MIN = 60;
 const NAME_LIMIT = 75;
-const RULES_VERSION = '20261104-relevant-traffic-1';
+const RULES_VERSION = '20261104-feasible-pairs-1';
 let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;
@@ -260,6 +264,8 @@ async function generateWithArk(file, searchFile, original, reference, existingJo
     if (typeof data.item_name === 'string' && !quantityLeads(data.item_name, sellingQuantity(el.original.value))) throw new Error('原标题数量必须原样放在商品标题最前面，结果未保存');
     const primaryPolicy = data.title_traffic_priority;
     if (primaryPolicy?.minimum_primary_keywords === 1 && (!Array.isArray(data.primary_traffic_keywords) || !data.primary_traffic_keywords.length)) throw new Error('标题未覆盖主要流量词，结果未保存');
+    const pairs = primaryPolicy?.required_keyword_pairs;
+    if (Array.isArray(pairs) && pairs.length && !pairs.some(pair => Array.isArray(pair) && pair.length === 2 && pair.every(phrase => typeof phrase === 'string' && titleHasPhrase(data.item_name || '', phrase)))) throw new Error('标题未覆盖生成前选定的可行双关键词组合，结果未保存');
     if (typeof data.item_highlights === 'string' && charLength(data.item_highlights) > 125) throw new Error('亮点超过125字符，结果未保存');
     const valid = typeof data.item_name === 'string' && data.item_name.trim()
       && typeof data.item_highlights === 'string' && data.item_highlights.trim()
@@ -340,6 +346,7 @@ function renderResult(result) {
     textNode('p', `✓ 截图识别：流量占比${result.traffic_header ? `“${result.traffic_header}”` : '未识别'}；月搜索量${result.search_header ? `“${result.search_header}”` : '未识别'}；仅按已识别指标排序`),
     textNode('p', `✓ 标题：${keywordQuotaText(result, 'name')}；重要变体已在标题或亮点保留`),
     textNode('p', `✓ 标题长度：${charLength(result.item_name)} 个字符，已通过前后端 60–75 字符校验（含空格和标点）；逐组实测选择完整候选，不自动截断；全失败最多重新生成1次`),
+    ...(result.title_pair_preflight ? [textNode('p', `✓ 生成前组合：数量与实际商品名称已预留，选定双关键词最短骨架 ${result.title_pair_preflight.shortest_skeleton_chars} 字符；第二词仅因75字符预算不可行时顺延`)] : []),
     textNode('p', result.title_traffic_priority?.minimum_primary_keywords === 1 ? `主要流量词：${(result.primary_traffic_keywords || []).join('、')}；先筛适用词，再按占比从高到低选择` : '选词来源：无适用流量词，按类目月搜索量从高到低选择；不要求主要流量词'),
     textNode('p', '亮点最多125字符，已按实际字数校验；不设长度下限，优先表达具体使用价值'),
     textNode('p', `亮点类目搜索词：${keywordQuotaText(result, 'highlights')}；优先作为表达依据；变序和单复数可能未计入完整匹配，不以数量判定质量`),

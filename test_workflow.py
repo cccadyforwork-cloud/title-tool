@@ -126,6 +126,63 @@ class WorkflowTests(unittest.TestCase):
             self.assertLessEqual(budget["characters"], server.NAME_LIMIT)
             self.assertEqual(budget["characters"] + budget["maximum_extra_characters"], server.NAME_LIMIT)
 
+    def test_preflight_skips_only_unfittable_second_keyword_and_keeps_top(self):
+        rows = [{"term": "Tool Alpha", "traffic": 50, "search_volume": None, "eligible": True},
+                {"term": "Long " * 22 + "Keyword", "traffic": 40, "search_volume": None, "eligible": True},
+                {"term": "Tool Beta", "traffic": 30, "search_volume": None, "eligible": True},
+                {"term": "Tool Gamma", "traffic": None, "search_volume": 999999, "eligible": True}]
+        plan = {"product_name": "Tool", "keywords": rows}
+        result = server.title_pair_preflight("10 Pcs Tool", plan, server.title_traffic_priority(rows))
+        self.assertEqual(result["selected_pairs"][0]["phrases"], ["Tool Alpha", "Tool Beta"])
+        for row in result["selected_pairs"]:
+            self.assertTrue(row["skeleton"].startswith("10 Pcs Tool"))
+            self.assertEqual(len(row["skeleton"]), row["characters"])
+            self.assertEqual(row["characters"] + row["maximum_extra_characters"], 75)
+            self.assertTrue(all(server.contains_phrase(row["skeleton"], phrase) for phrase in row["phrases"]))
+        # When the second-highest term fits, a shorter lower term must not replace it.
+        rows[1]["term"] = "Tool Delta"
+        result = server.title_pair_preflight("10 Pcs Tool", plan, server.title_traffic_priority(rows))
+        self.assertEqual(result["selected_pairs"][0]["phrases"], ["Tool Alpha", "Tool Delta"])
+
+    def test_preflight_75_boundary_and_literal_word_overlap(self):
+        prefix = "10 Pcs Tool Alpha Beta "
+        rows = [{"term": "Tool Alpha", "traffic": 50, "eligible": True},
+                {"term": "Beta " + "X" * (75 - len(prefix)), "traffic": 40, "eligible": True}]
+        plan = {"product_name": "Tool", "keywords": rows}
+        result = server.title_pair_preflight("10 Pcs Tool", plan, server.title_traffic_priority(rows))
+        self.assertEqual(result["shortest_skeleton_chars"], 75)
+        rows[1]["term"] += "X"
+        with self.assertRaisesRegex(ValueError, "骨架最短 76"):
+            server.title_pair_preflight("10 Pcs Tool", plan, server.title_traffic_priority(rows))
+        overlap = [{"term": "Paper Cutter Tool", "traffic": 50, "eligible": True},
+                   {"term": "Tool for Gift Wrap", "traffic": 40, "eligible": True}]
+        result = server.title_pair_preflight("1PC Paper Cutter", {"product_name": "Paper Cutter", "keywords": overlap}, server.title_traffic_priority(overlap))
+        self.assertEqual(result["selected_pairs"][0]["skeleton"], "1PC Paper Cutter Tool for Gift Wrap")
+
+    def test_no_feasible_top_pair_stops_before_writing_or_retry(self):
+        rows = [{"term": "Tool " + "Highest " * 12, "traffic": 50, "eligible": True},
+                {"term": "Tool Beta", "traffic": 20, "eligible": True},
+                {"term": "Tool Gamma", "traffic": 10, "eligible": True}]
+        plan = {"product_name": "Tool", "keywords": rows, "required_variants": [], "facts": []}
+        with patch.object(server, "read_api_key", return_value="mock"), patch.object(server, "extract_keywords", return_value=(rows, "Traffic Share")), \
+                patch.object(server, "extract_search_keywords", return_value=([], "")), patch.object(server, "plan_product", return_value=plan), \
+                patch.object(server, "ask_ark") as writer:
+            with self.assertRaisesRegex(ValueError, "75字符内无可用双关键词骨架"):
+                server.generate({"original": "10 Pcs Tool", "image": IMAGE})
+            writer.assert_not_called()
+
+    def test_preflight_selected_pair_is_checked_in_final_title(self):
+        plan = {"product_name": "Pill Cutter", "keywords": [
+            {"term": term, "traffic": value, "eligible": True} for term, value in
+            [("pill cutter", 50), ("pill splitter", 40), ("tablet cutter", 30)]], "required_variants": []}
+        policy = server.title_traffic_priority(plan["keywords"])
+        preflight = server.title_pair_preflight(ORIGINAL, plan, policy)
+        policy["required_keyword_pairs"] = [row["phrases"] for row in preflight["selected_pairs"]]
+        candidate = {**CANDIDATE, "item_name": "Clear Pill Cutter with Mini Storage Case and Tablet Cutter for Travel", "self_check": APPROVED}
+        checked = server.validate_generated_candidate(candidate, plan, server.keyword_requirements(plan["keywords"]), "", policy)
+        self.assertEqual(len(checked["name_groups"]), 2)
+        self.assertTrue(any("可行双关键词" in error for error in checked["errors"]))
+
     def test_highlights_prompt_uses_supported_consumer_context_without_keyword_skeleton(self):
         plan = {"keywords": [{**row, "eligible": True} for row in server.merge_keywords(KEYWORDS, SEARCH)],
                 "required_variants": [], "facts": [], "highlight_context": {"scene": "Gift wrapping"}}

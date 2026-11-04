@@ -30,7 +30,7 @@ async function submitWithName(name, options = {}) {
   let requests = 0;
   const phrases = ['pill cutter', 'pill splitter', 'tablet cutter', 'medicine cutter', 'tablet splitter'].map(term => ({term, locations: []}));
   const answer = {
-    item_name: name, item_highlights: highlights, rules_version: '20261104-feasible-pairs-1',
+    item_name: name, item_highlights: highlights, rules_version: '20261105-organic-traffic-1',
     title_traffic_priority: {minimum_primary_keywords: 0, required_keyword_pairs: requiredPairs},
     name_independent_keywords: phrases.slice(0, nameCount), highlights_independent_keywords: phrases.slice(0, highlightsCount),
     keywords: phrases, used: phrases, facts: [], required_variants: [], model: 'synthetic', attempts: 1,

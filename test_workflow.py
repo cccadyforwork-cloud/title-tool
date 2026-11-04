@@ -80,16 +80,63 @@ class WorkflowTests(unittest.TestCase):
         self.assertEqual(rows[0]["locations"], [])
 
     def test_percentages_reject_nonfinite_and_normalize_order(self):
-        rows = server.normalize_keywords([{"term": "b", "traffic": 2}, {"term": "a", "traffic": "89.66%"},
-                                         {"term": "b", "traffic": 3}, {"term": "bad", "traffic": "NaN"},
+        rows = server.normalize_keywords([{"term": "b", "traffic": 2, "traffic_basis": "organic"}, {"term": "a", "traffic": "89.66%", "traffic_basis": "organic"},
+                                         {"term": "b", "traffic": 3, "traffic_basis": "organic"}, {"term": "bad", "traffic": "NaN"},
                                          {"term": "inf", "traffic": "Infinity"}, {"term": "zero", "traffic": 0}])
         self.assertEqual(rows, [{"term": "a", "traffic": 89.66}, {"term": "b", "traffic": 3.0}])
 
     def test_percentage_cannot_absorb_the_grey_count_below_it(self):
         self.assertEqual(server.normalize_keywords([
             {"term": "bad", "traffic": 58.463883},
-            {"term": "good", "traffic_text": "1.44%", "traffic": 1.441576}]),
+            {"term": "good", "traffic_text": "1.44%", "traffic": 1.441576, "traffic_basis": "organic"}]),
             [{"term": "good", "traffic": 1.44}])
+
+    def test_organic_share_reorders_mixed_rows_and_drives_primary_and_pairs(self):
+        rows = server.normalize_keywords([
+            {"term": "towel hooks for bathrooms", "traffic_text": "9.43%", "traffic_basis": "total", "organic_ratio_text": "43.63%", "primary_traffic": True},
+            {"term": "towel hooks", "traffic_text": "6.73%", "traffic_basis": "total", "organic_ratio_text": "79.45%"},
+            {"term": "suction cup hooks", "traffic_text": "13.93%", "traffic_basis": "total", "organic_ratio_text": "64.25%"}])
+        self.assertEqual([r["term"] for r in rows], ["suction cup hooks", "towel hooks", "towel hooks for bathrooms"])
+        self.assertEqual(rows[0]["traffic"], 8.950025)
+        self.assertEqual(rows[0]["traffic_total"], 13.93)
+        self.assertEqual(rows[0]["organic_ratio"], 64.25)
+        self.assertEqual(rows[1]["traffic"], 5.346985)
+        merged = server.merge_keywords(rows, [])
+        for row in merged: row["eligible"] = True
+        priority = server.title_traffic_priority(merged)
+        self.assertEqual(priority["required_top_phrases"], ["suction cup hooks"])
+        pair = server.title_pair_preflight("Hooks", {"product_name": "Hooks", "keywords": merged}, priority)
+        self.assertEqual(set(pair["selected_pairs"][0]["phrases"]), {"suction cup hooks", "towel hooks"})
+
+    def test_advertising_and_unreadable_organic_shares_cannot_enter_traffic_pool(self):
+        inputs = [
+            {"term": "ad only", "traffic_text": "99%", "traffic_basis": "total", "organic_ratio_text": "0%"},
+            {"term": "hidden", "traffic_text": "98%", "traffic_basis": "total", "organic_ratio_text": None},
+            {"term": "unknown", "traffic_text": "97%", "traffic_basis": "unknown"},
+            {"term": "missing", "traffic_text": "96%"},
+            {"term": "bad", "traffic_text": "95%", "traffic_basis": "total", "organic_ratio_text": "101%"},
+            {"term": "occluded", "traffic_text": "94%", "traffic_basis": "total", "organic_ratio_text": "6?.25%"}]
+        self.assertEqual(server.normalize_keywords(inputs), [])
+        merged = server.merge_keywords([], [{"term": "ad only", "search_volume": 123}])
+        merged[0]["eligible"] = True
+        self.assertIsNone(merged[0]["traffic"])
+        self.assertEqual(server.title_traffic_priority(merged)["primary_source"], "category_search")
+
+    def test_explicit_organic_and_full_organic_are_not_multiplied_twice(self):
+        rows = server.normalize_keywords([
+            {"term": "direct", "traffic_text": "8.95%", "traffic_basis": "organic", "organic_ratio_text": "64.25%"},
+            {"term": "full", "traffic_text": "7.44%", "traffic_basis": "total", "organic_ratio_text": "100.00%"}])
+        self.assertEqual([r["traffic"] for r in rows], [8.95, 7.44])
+
+    @patch.object(server, "ask_ark")
+    def test_ocr_keeps_raw_distribution_and_program_computes_share(self, ask):
+        ask.return_value = {"traffic_column_present": True, "header_text": "流量占比 / 流量分布", "keywords": [
+            {"term": "hooks", "traffic_text": "13.93%", "traffic_basis": "total", "organic_ratio_text": "64.25%", "traffic": 99}]}
+        rows, _ = server.extract_keywords(IMAGE, "fake")
+        self.assertEqual(rows[0]["traffic"], 8.950025)
+        prompt = ask.call_args.args[0][0]["text"]
+        self.assertIn("no multiplication or renormalization", prompt)
+        self.assertIn("organic rank", prompt)
 
     def test_monthly_search_is_separate_from_traffic(self):
         rows = server.merge_keywords(KEYWORDS, SEARCH)
@@ -211,7 +258,7 @@ class WorkflowTests(unittest.TestCase):
         rows = [{"term": "pill cutter", "eligible": True, "traffic": 3.63, "search_volume": 100},
                 {"term": "pill splitter", "eligible": True, "traffic": None, "search_volume": 90000},
                 {"term": "tablet cutter", "eligible": True, "traffic": 2, "search_volume": 50},
-                {"term": "wrong product", "eligible": False, "traffic": 50, "search_volume": 10, "primary_traffic": True}]
+                {"term": "wrong product", "eligible": False, "traffic": 50, "search_volume": 10, "primary_traffic": True, "traffic_basis": "organic"}]
         policy = server.title_traffic_priority(rows)
         self.assertEqual(policy["required_top_phrases"], ["pill cutter"])
         self.assertEqual([row["term"] for row in policy["ranked_traffic_phrases"]], ["pill cutter", "tablet cutter"])
@@ -227,9 +274,9 @@ class WorkflowTests(unittest.TestCase):
 
     def test_screenshot_primary_label_survives_merge_and_cannot_be_replaced(self):
         rows = server.normalize_keywords([
-            {"term": "christmas wrapping paper", "traffic": 14.49, "traffic_label": "主要流量词"},
-            {"term": "wrapping paper", "traffic": 12.08, "primary_traffic": True},
-            {"term": "wrapping paper cutter", "traffic": 3.63, "traffic_label": "转化承接词"}])
+            {"term": "christmas wrapping paper", "traffic": 14.49, "traffic_label": "主要流量词", "traffic_basis": "organic"},
+            {"term": "wrapping paper", "traffic": 12.08, "primary_traffic": True, "traffic_basis": "organic"},
+            {"term": "wrapping paper cutter", "traffic": 3.63, "traffic_label": "转化承接词", "traffic_basis": "organic"}])
         merged = server.merge_keywords(rows, [{"term": "wrapping paper cutter", "search_volume": 65599}])
         for row in merged: row["eligible"] = True
         policy = server.title_traffic_priority(merged)
@@ -240,19 +287,19 @@ class WorkflowTests(unittest.TestCase):
                      {"term": "wrapping paper cutter", "traffic": 3.63, "eligible": True}]
         self.assertEqual(server.title_traffic_priority(no_labels)["required_top_phrases"], ["wrapping paper cutter"])
         self.assertEqual(server.title_traffic_priority(no_labels)["primary_source"], "highest_relevant_traffic")
-        marked_low = [{**no_labels[0], "primary_traffic": False}, {**no_labels[1], "primary_traffic": True}]
+        marked_low = [{**no_labels[0], "primary_traffic": False}, {**no_labels[1], "primary_traffic": True, "traffic_basis": "organic"}]
         self.assertEqual(server.title_traffic_priority(marked_low)["required_top_phrases"], ["wrapping paper cutter"])
 
     def test_lower_primary_marker_does_not_override_higher_applicable_share(self):
         rows = [{"term": "broom covers", "eligible": True, "traffic": 8},
-                {"term": "broom dust covers", "eligible": True, "traffic": 2, "primary_traffic": True}]
+                {"term": "broom dust covers", "eligible": True, "traffic": 2, "primary_traffic": True, "traffic_basis": "organic"}]
         self.assertEqual(server.title_traffic_priority(rows)["required_top_phrases"], ["broom covers"])
         tied = [*rows, {"term": "disposable broom covers", "eligible": True, "traffic": 8}]
         self.assertEqual(server.title_traffic_priority(tied)["required_top_phrases"], ["broom covers", "disposable broom covers"])
 
     def test_broom_promotions_fall_back_to_category_without_real_api(self):
         original = "100 Pcs Disposable Broom Hair Cover, Nonwoven Broom Sleeve with Elastic Opening, Household Accessory for Floor Hair and Debris Cleanup"
-        rows = [{"term": "lightning deals of today prime", "traffic": 7.44, "search_volume": None, "eligible": False, "primary_traffic": True},
+        rows = [{"term": "lightning deals of today prime", "traffic": 7.44, "search_volume": None, "eligible": False, "primary_traffic": True, "traffic_basis": "organic"},
                 {"term": "clearance", "traffic": 3.24, "search_volume": None, "eligible": False},
                 {"term": "broom covers", "traffic": None, "search_volume": 669, "eligible": True},
                 {"term": "disposable broom covers", "traffic": None, "search_volume": 668, "eligible": True},
@@ -430,7 +477,7 @@ class WorkflowTests(unittest.TestCase):
 
     @patch.object(server, "ask_ark")
     def test_wrong_metric_is_rejected(self, ask):
-        ask.return_value = {"traffic_column_present": False, "header_text": "自然流量分布", "keywords": KEYWORDS}
+        ask.return_value = {"traffic_column_present": False, "header_text": "自然流量分布", "keywords": [{**row, "traffic_basis": "organic"} for row in KEYWORDS]}
         self.assertEqual(server.extract_keywords(IMAGE, "key"), ([], ""))
 
     @patch.object(server, "ask_ark")
@@ -469,7 +516,7 @@ class WorkflowTests(unittest.TestCase):
     @patch.object(server, "read_api_key", return_value="fake-key")
     @patch.object(server, "ask_ark")
     def test_one_generation_returns_same_response_self_check(self, ask, read_key):
-        ask.side_effect = [{"traffic_column_present": True, "header_text": "流量占比", "keywords": KEYWORDS},
+        ask.side_effect = [{"traffic_column_present": True, "header_text": "流量占比", "keywords": [{**row, "traffic_basis": "organic"} for row in KEYWORDS]},
                            {"search_column_present": True, "header_text": "月搜索量", "keywords": SEARCH},
                            PLAN, {**CANDIDATE, "self_check": APPROVED}]
         result = server.generate({"image": IMAGE, "search_image": IMAGE, "original": ORIGINAL})
@@ -529,7 +576,7 @@ class WorkflowTests(unittest.TestCase):
             with self.subTest(size=size):
                 ask.reset_mock()
                 candidate = {**CANDIDATE, "item_name": "A" * size, "self_check": APPROVED}
-                ask.side_effect = [{"traffic_column_present": True, "header_text": "流量占比", "keywords": KEYWORDS},
+                ask.side_effect = [{"traffic_column_present": True, "header_text": "流量占比", "keywords": [{**row, "traffic_basis": "organic"} for row in KEYWORDS]},
                                    {"search_column_present": True, "header_text": "月搜索量", "keywords": SEARCH}, PLAN, candidate, candidate]
                 with self.assertRaisesRegex(ValueError, f"Item Name 为 {size} 个字符"):
                     server.generate({"image": IMAGE, "search_image": IMAGE, "original": ORIGINAL,
@@ -542,7 +589,7 @@ class WorkflowTests(unittest.TestCase):
     @patch.object(server, "read_api_key", return_value="fake-key")
     @patch.object(server, "ask_ark")
     def test_failed_self_check_is_retried_only_once(self, ask, read_key):
-        ask.side_effect = [{"traffic_column_present": True, "header_text": "流量占比", "keywords": KEYWORDS},
+        ask.side_effect = [{"traffic_column_present": True, "header_text": "流量占比", "keywords": [{**row, "traffic_basis": "organic"} for row in KEYWORDS]},
                            {"search_column_present": True, "header_text": "月搜索量", "keywords": SEARCH}, PLAN,
                            *[{**CANDIDATE, "self_check": {**APPROVED, "natural": False, "issues": ["连接不自然"]}}] * 2]
         with self.assertRaisesRegex(ValueError, "连接不自然"):

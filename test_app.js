@@ -18,7 +18,7 @@ function node() {
 async function submitWithName(name, options = {}) {
   const {availableName = 3, availableHighlights = 3,
     nameCount = Math.min(3, availableName), highlightsCount = Math.min(3, availableHighlights),
-    nameMinimum = 2, highlightsMinimum = 0,
+    nameMinimum = 2, highlightsMinimum = Math.min(2, availableHighlights),
     expectedError = null, original = 'Synthetic original', highlights = "B".repeat(60), requiredPairs = []} = options;
   const nodes = new Map();
   const query = selector => {
@@ -30,7 +30,7 @@ async function submitWithName(name, options = {}) {
   let requests = 0;
   const phrases = ['pill cutter', 'pill splitter', 'tablet cutter', 'medicine cutter', 'tablet splitter'].map(term => ({term, locations: []}));
   const answer = {
-    item_name: name, item_highlights: highlights, rules_version: '20261105-core-identity-1',
+    item_name: name, item_highlights: highlights, rules_version: '20261105-highlight-coverage-1',
     title_traffic_priority: {minimum_primary_keywords: 0, required_keyword_pairs: requiredPairs},
     name_independent_keywords: phrases.slice(0, nameCount), highlights_independent_keywords: phrases.slice(0, highlightsCount),
     keywords: phrases, used: phrases, facts: [], required_variants: [], model: 'synthetic', attempts: 1,
@@ -84,7 +84,10 @@ async function submitWithName(name, options = {}) {
     await submitWithName('A'.repeat(70), {availableName, availableHighlights, expectedError: availableName < 2 ? /完整自检/ : null});
   }
   await submitWithName('A'.repeat(70), {availableName: 3, nameCount: 2, nameMinimum: 2});
-  await submitWithName('A'.repeat(70), {availableHighlights: 3, highlightsCount: 0});
+  await submitWithName('A'.repeat(70), {availableHighlights: 3, highlightsCount: 0, expectedError: /完整自检/});
+  await submitWithName('A'.repeat(70), {availableHighlights: 3, highlightsCount: 1, expectedError: /完整自检/});
+  await submitWithName('A'.repeat(70), {availableHighlights: 1, highlightsCount: 1});
+  await submitWithName('A'.repeat(70), {availableHighlights: 5, highlightsCount: 5});
   await submitWithName('A'.repeat(70), {availableName: 2, nameCount: 1, expectedError: /完整自检/});
   await submitWithName('A'.repeat(70), {availableName: 1.5, nameCount: 1, expectedError: /完整自检/});
   await submitWithName('A'.repeat(70), {highlights: 'B'.repeat(126), expectedError: /超过125字符/});

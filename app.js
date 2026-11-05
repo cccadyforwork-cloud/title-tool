@@ -29,7 +29,7 @@ function quantityLeads(name, quantity) {
 }
 const NAME_MIN = 60;
 const NAME_LIMIT = 75;
-const RULES_VERSION = '20261105-core-identity-1';
+const RULES_VERSION = '20261105-highlight-coverage-1';
 let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;
@@ -162,13 +162,13 @@ function keywordQuotaValid(data, field) {
   const count = checks?.[`${field}_keyword_count`];
   const rows = data[`${field}_independent_keywords`];
   return Number.isInteger(available) && available >= 0 && available <= data.keywords.length
-    && minimum === (field === 'name' ? 2 : 0) && Number.isInteger(count)
+    && minimum === (field === 'name' ? 2 : Math.min(2, available)) && Number.isInteger(count)
     && Array.isArray(rows) && rows.length === count && count >= minimum && count <= available;
 }
 function keywordQuotaText(result, field) {
   const checks = result.local_validation;
   const available = checks[`available_${field}_keywords`], minimum = checks[`minimum_${field}_keywords`];
-  if (field === 'highlights') return `完整词组命中 ${checks.highlights_keyword_count} 个类目词组 · 可用 ${available} 个 · 不设数量门槛`;
+  if (field === 'highlights') return `完整词组命中 ${checks.highlights_keyword_count} 个类目词组 · 可用 ${available} 个 · 本次至少 ${minimum} 个 · 覆盖数无上限，尽量补充标题未用词`;
   return `已覆盖 ${checks.name_keyword_count} 个 · 可用 ${available} 个 · 本次至少 ${minimum} 个，身份准确优先，尽量覆盖3个`;
 }
 const pendingGenerationKey = `title-workbench-pending:${draftScope}`;
@@ -359,7 +359,7 @@ function renderResult(result) {
     ...(result.title_pair_preflight ? [textNode('p', `✓ 生成前组合：数量与核心品名“${result.title_pair_preflight.product_identity}”已预留，功能等描述另作写作素材；选定双关键词最短骨架 ${result.title_pair_preflight.shortest_skeleton_chars} 字符；第二词仅因75字符预算不可行时顺延`)] : []),
     textNode('p', result.title_traffic_priority?.minimum_primary_keywords === 1 ? `主要流量词：${(result.primary_traffic_keywords || []).join('、')}；先筛适用词，再按自然流量贡献占比从高到低选择` : '选词来源：无适用流量词，按类目月搜索量从高到低选择；不要求主要流量词'),
     textNode('p', '亮点最多125字符，已按实际字数校验；不设长度下限，优先表达具体使用价值'),
-    textNode('p', `亮点类目搜索词：${keywordQuotaText(result, 'highlights')}；优先作为表达依据；变序和单复数可能未计入完整匹配，不以数量判定质量`),
+    textNode('p', `亮点类目搜索词：${keywordQuotaText(result, 'highlights')}；达到动态最低数量后自然多覆盖，尽量避免与标题关键词及描述重复；仅计独立完整类目词，不堆词`),
     textNode('p', '✓ 计数：不跨字段拼词，嵌套、单复数和连字符变体不重复计数'),
     ...Object.entries(REVIEW_LABELS).map(([key, label]) => textNode('p', `${result.review[key] ? '✓' : '×'} 豆包生成自检：${label}`)),
     textNode('p', `规则 ${result.rules_version} · 生成 ${result.model} · 生成时自检 · 本次尝试 ${result.attempts} 次`, 'audit-meta')

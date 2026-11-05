@@ -281,7 +281,7 @@ class WorkflowTests(unittest.TestCase):
                 "required_variants": [], "facts": [], "highlight_context": {"scene": "Gift wrapping"}}
         prompt = server.generation_prompt(ORIGINAL, "", plan, server.keyword_requirements(plan["keywords"]))
         self.assertNotIn('"highlights_budgets"', prompt)
-        self.assertIn("亮点不设关键词数量门槛", prompt)
+        self.assertIn("亮点最低类目词数量为min(2,available_highlights_keywords)", prompt)
         self.assertIn("具体功能如何帮助", prompt)
         self.assertIn("没有提供的人群、尺寸限制或兼容范围留空", prompt)
         self.assertIn('"scene": "Gift wrapping"', prompt)
@@ -352,7 +352,7 @@ class WorkflowTests(unittest.TestCase):
                 {"term": "broom dust covers", "traffic": None, "search_volume": 1761, "eligible": True}]
         plan = {"product_name": "Disposable Broom Cover", "facts": [], "required_variants": [], "keywords": rows}
         candidate = {"item_name": "100 Pcs Disposable Broom Covers, Broom Dust Covers for Floor Cleanup",
-                     "item_highlights": "Nonwoven sleeves with elastic openings for floor hair and debris cleanup.", "self_check": APPROVED}
+                     "item_highlights": "Disposable broom covers and broom dust covers with elastic openings for floor hair and debris cleanup.", "self_check": APPROVED}
         with patch.object(server, "read_api_key", return_value="mock"), patch.object(server, "extract_keywords", return_value=(rows[:2], "Click Share")), \
                 patch.object(server, "extract_search_keywords", return_value=(rows[2:], "M. Searches")), \
                 patch.object(server, "plan_product", return_value=plan), patch.object(server, "ask_ark", return_value={"candidates": [candidate] * 3}) as ask:
@@ -397,7 +397,7 @@ class WorkflowTests(unittest.TestCase):
                 "required_variants": [{"value": "1PC"}, {"value": "Black"}],
                 "highlight_context": {"scene": "Birthdays, holidays and parties"}}
         candidate = {"item_name": "1PC Wrapping Paper Cutter and Gift Wrap Cutter for Holiday Gifts, Black",
-                     "item_highlights": "Slide along wrapping paper rolls to cut sheets for birthdays, holidays and parties",
+                     "item_highlights": "Wrapping paper cutter and gift wrap cutter slide along wrapping paper rolls for birthdays, holidays and parties",
                      "self_check": APPROVED}
         with patch.object(server, "read_api_key", return_value="fake-key"), \
                 patch.object(server, "extract_keywords", return_value=(rows, "Traffic Share")), \
@@ -428,6 +428,40 @@ class WorkflowTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "实际商品身份"):
                 server.generate({"image": IMAGE, "original": ORIGINAL})
         self.assertEqual(ask.call_count, 2)
+
+    def test_highlights_enforce_two_only_when_the_eligible_category_pool_has_two(self):
+        rows = [{"term": term, "traffic": 10, "search_volume": 100, "eligible": True} for term in ("pill cutter", "pill splitter", "tablet cutter")]
+        plan = {"product_name": "Pill Cutter", "required_variants": [], "keywords": rows}
+        answer = {**CANDIDATE, "item_highlights": "Pill cutter with mini storage case", "self_check": APPROVED}
+        checked = server.validate_generated_candidate(answer, plan, server.keyword_requirements(rows), "", server.title_traffic_priority(rows))
+        self.assertTrue(any("要求至少 2 个" in error for error in checked["errors"]))
+        for row in rows[1:]: row["search_volume"] = None
+        checked = server.validate_generated_candidate(answer, plan, server.keyword_requirements(rows), "", server.title_traffic_priority(rows))
+        self.assertEqual(checked["errors"], [])
+        self.assertEqual(len(checked["highlight_groups"]), 1)
+        self.assertNotIn("补充", " ".join(checked["errors"]))
+
+    def test_highlights_coverage_has_no_two_or_three_word_ceiling(self):
+        rows = [{"term": term, "traffic": 10, "search_volume": 100, "eligible": True} for term in ("pill cutter", "pill splitter", "tablet cutter", "medicine cutter")]
+        plan = {"product_name": "Pill Cutter", "required_variants": [], "keywords": rows}
+        answer = {**CANDIDATE, "item_highlights": "Pill cutter, pill splitter, tablet cutter and medicine cutter with mini storage", "self_check": APPROVED}
+        checked = server.validate_generated_candidate(answer, plan, server.keyword_requirements(rows), "", server.title_traffic_priority(rows))
+        self.assertEqual(checked["errors"], [])
+        self.assertEqual(len(checked["highlight_groups"]), 4)
+        lower = {**checked, "highlight_groups": checked["highlight_groups"][:3]}
+        self.assertGreater(server.candidate_priority(checked, rows, 3), server.candidate_priority(lower, rows, 3))
+
+    def test_equal_highlight_coverage_prefers_words_missing_from_title(self):
+        rows = [{"term": term, "traffic": None, "search_volume": 1000-index, "eligible": True} for index, term in enumerate(("pill cutter", "pill splitter", "medicine cutter", "tablet splitter"))]
+        base = {"name": CANDIDATE["item_name"], "name_groups": rows[:2]}
+        repeated = {**base, "highlight_groups": rows[:2]}
+        new = {**base, "highlight_groups": rows[2:]}
+        self.assertGreater(server.candidate_priority(new, rows, 3), server.candidate_priority(repeated, rows, 3))
+        plan = {"product_name": "Pill Cutter", "required_variants": [], "facts": [], "keywords": rows}
+        prompt = server.generation_prompt(ORIGINAL, "", plan, server.keyword_requirements(rows))
+        self.assertIn("优先选择标题尚未覆盖的类目词", prompt)
+        self.assertIn("没有上限", prompt)
+        self.assertIn("允许必要重复", prompt)
 
     def test_highlights_count_only_independent_eligible_category_matches(self):
         rows = [
@@ -475,18 +509,18 @@ class WorkflowTests(unittest.TestCase):
                 self.assertEqual(checks["available_name_keywords"], size)
                 self.assertEqual(checks["available_highlights_keywords"], size)
                 self.assertEqual(checks["minimum_name_keywords"], min(2, size))
-                self.assertEqual(checks["minimum_highlights_keywords"], 0)
+                self.assertEqual(checks["minimum_highlights_keywords"], min(2, checks["available_highlights_keywords"]))
                 self.assertEqual(checks["name_keyword_count"], min(3, size))
 
-    def test_title_accepts_two_keywords_and_highlights_can_explain_use_without_exact_keywords(self):
+    def test_title_accepts_two_keywords_and_highlights_require_two_when_available(self):
         rows = [{"term": term, "traffic": 10, "search_volume": 100, "eligible": True}
                 for term in ("pill cutter", "pill splitter", "tablet cutter")]
         candidate = {**CANDIDATE, "item_name": CANDIDATE["item_name"].replace("Tablet Cutter", "Tablet Holder"),
-                     "item_highlights": "Built-in storage keeps divided tablets together between uses"}
+                     "item_highlights": "Pill cutter and pill splitter with built-in storage for divided tablets"}
         result = self.generate_with_pool(rows, candidate)
         self.assertEqual(result["local_validation"]["name_keyword_count"], 2)
-        self.assertEqual(result["local_validation"]["highlights_keyword_count"], 0)
-        self.assertEqual(result["local_validation"]["minimum_highlights_keywords"], 0)
+        self.assertEqual(result["local_validation"]["highlights_keyword_count"], 2)
+        self.assertEqual(result["local_validation"]["minimum_highlights_keywords"], min(2, result["local_validation"]["available_highlights_keywords"]))
         self.assertLess(len(result["item_highlights"]), 100)
 
     def test_each_field_has_its_own_quota_and_selection_rules_are_unchanged(self):
@@ -494,20 +528,20 @@ class WorkflowTests(unittest.TestCase):
                 for index, term in enumerate(("pill cutter", "pill splitter", "tablet cutter"))]
         result = self.generate_with_pool(rows)
         self.assertEqual(result["local_validation"]["minimum_name_keywords"], 2)
-        self.assertEqual(result["local_validation"]["minimum_highlights_keywords"], 0)
+        self.assertEqual(result["local_validation"]["minimum_highlights_keywords"], min(2, result["local_validation"]["available_highlights_keywords"]))
         # Category phrases may still supplement Name, exactly as before this change.
         for index, row in enumerate(rows):
             row.update(traffic=10 if index == 0 else None, search_volume=100)
         result = self.generate_with_pool(rows)
         self.assertEqual(result["local_validation"]["minimum_name_keywords"], 2)
-        self.assertEqual(result["local_validation"]["minimum_highlights_keywords"], 0)
+        self.assertEqual(result["local_validation"]["minimum_highlights_keywords"], min(2, result["local_validation"]["available_highlights_keywords"]))
 
     def test_no_eligible_category_phrases_does_not_invent_search_keywords(self):
         rows = [{"term": "pill cutter", "traffic": 10, "search_volume": None, "eligible": True},
                 {"term": "tablet cutter", "traffic": 5, "search_volume": None, "eligible": True},
                 {"term": "phone case", "traffic": None, "search_volume": 100, "eligible": False}]
         result = self.generate_with_pool(rows)
-        self.assertEqual(result["local_validation"]["minimum_highlights_keywords"], 0)
+        self.assertEqual(result["local_validation"]["minimum_highlights_keywords"], min(2, result["local_validation"]["available_highlights_keywords"]))
         self.assertEqual(result["highlights_independent_keywords"], [])
 
     def test_short_pool_budgets_and_nested_variants_keep_original_counting(self):
@@ -519,7 +553,7 @@ class WorkflowTests(unittest.TestCase):
                 for term in ("pill cutter", "pill cutters", "pill-cutter", "small pill cutter", "tablet cutter")]
         checks = server.keyword_requirements(rows)
         self.assertEqual(checks["available_name_keywords"], 2)
-        self.assertEqual(checks["minimum_highlights_keywords"], 0)
+        self.assertEqual(checks["minimum_highlights_keywords"], min(2, checks["available_highlights_keywords"]))
 
     @patch.object(server, "ask_ark")
     def test_wrong_metric_is_rejected(self, ask):
@@ -596,7 +630,7 @@ class WorkflowTests(unittest.TestCase):
 
     def test_candidates_keep_own_semantic_checks_and_pair(self):
         failed = {**CANDIDATE, "self_check": {**APPROVED, "identity_clear": False}}
-        valid = {**CANDIDATE, "item_highlights": "Built-in storage keeps divided tablets together between uses", "self_check": APPROVED}
+        valid = {**CANDIDATE, "item_highlights": "Pill cutter and pill splitter with built-in storage for divided tablets", "self_check": APPROVED}
         result, calls, _ = self.generate_candidate_batches([{"candidates": [failed, valid]}])
         self.assertEqual(calls, 1)
         self.assertEqual(result["item_highlights"], valid["item_highlights"])

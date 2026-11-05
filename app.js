@@ -29,7 +29,7 @@ function quantityLeads(name, quantity) {
 }
 const NAME_MIN = 60;
 const NAME_LIMIT = 75;
-const RULES_VERSION = '20261105-highlight-coverage-1';
+const RULES_VERSION = '20261105-dynamic-name-budget-1';
 let screenshotFile = null;
 let searchScreenshotFile = null;
 let currentResult = null;

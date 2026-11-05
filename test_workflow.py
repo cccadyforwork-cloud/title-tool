@@ -21,6 +21,25 @@ IMAGE = "data:image/png;base64," + base64.b64encode(b"fixture").decode()
 
 
 class WorkflowTests(unittest.TestCase):
+    def test_candidate_ranges_follow_measured_skeleton(self):
+        self.assertEqual(server.candidate_name_ranges({"shortest_skeleton_chars": 40}), [
+            {"candidate": 1, "min": 60, "max": 65},
+            {"candidate": 2, "min": 65, "max": 70},
+            {"candidate": 3, "min": 70, "max": 75}])
+        self.assertEqual(server.candidate_name_ranges({"shortest_skeleton_chars": 68}), [
+            {"candidate": 1, "min": 68, "max": 70},
+            {"candidate": 2, "min": 70, "max": 72},
+            {"candidate": 3, "min": 72, "max": 75}])
+        self.assertEqual(server.candidate_name_ranges({"shortest_skeleton_chars": 75})[0]["min"], 75)
+
+    def test_retry_length_feedback_distinguishes_short_and_long(self):
+        self.assertEqual(server.name_length_feedback("A" * 57),
+                         {"action": "add_supported_detail", "characters_needed": 3})
+        self.assertEqual(server.name_length_feedback("A" * 79),
+                         {"action": "remove_optional_detail", "characters_needed": 4})
+        self.assertEqual(server.name_length_feedback("A" * 68),
+                         {"action": "keep_length", "characters_needed": 0})
+
     @patch.object(server.urllib.request, "urlopen")
     def test_invalid_json_has_one_bounded_format_repair(self, urlopen):
         def response(text):
